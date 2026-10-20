@@ -58,6 +58,11 @@ MODERN_BATCH_FLAGS = 0xC0
 # layer of its own
 ENV_COMBOS = {0x8000: (1, 4), 0x8003: (1, 4), 0x8002: (1, 3)}
 SHADER_ADD_LAYER = 0x8001
+# in a scene, every Opaque_AddAlpha entry adds its second texture as a layer: 0x8001 and 0x8005 (the
+# reflection map, or the diffuse's UVs again), 0x800A and 0x800F (_Wgt: by its texture weight, on the
+# first or second UV set) - the Mag'har select scene's bonfire and lamppost glows (0x800A), black
+# when 3.3.5 multiplied the glow into the diffuse
+SCENE_ADD_LAYERS = {0x8001, 0x8005, 0x800A, 0x800F}
 SHADER_TABLE = 0x8000                    # a BfA shader id with this bit indexes retail's shader table;
                                          # one without is its two ops (bits 4-6, then bits 0-2)
 COMBINE_MOD = 1
@@ -340,7 +345,8 @@ def wotlk_layers(m2: bytes, skins: list[bytes], source_skins: list[bytes], *,
     ``own_ops`` (a glue scene; WarcraftXL's helmets have nothing to say about scenes): a two-texture
     id outside the shader table names its own two ops (the Horde create scene's fire glows and
     flags: 0x4014, Mod then Mod2x on the second UV set), and keeps both textures, its ops in the
-    table, when there is one - drawn alone, the fire's mask was gone."""
+    table - drawn alone, the fire's mask was gone; and every Opaque_AddAlpha entry
+    (``SCENE_ADD_LAYERS``) adds its second texture as 0x8001 does."""
     from wotlkconv.m2.model import parse_md20
     from wotlkconv.m2.write import write_md20
 
@@ -362,7 +368,9 @@ def wotlk_layers(m2: bytes, skins: list[bytes], source_skins: list[bytes], *,
             plan.append((batch, shader, count))
         plans.append(plan)
     # a table only when some batch combines two textures; then every single texture is Mod
-    two = any(count >= 2 and shader in ENV_COMBOS for plan in plans for _b, shader, count in plan)
+    add_layers = SCENE_ADD_LAYERS if own_ops else {SHADER_ADD_LAYER}
+    two = any(count >= 2 and (shader in ENV_COMBOS or own_ops and not shader & SHADER_TABLE)
+              for plan in plans for _b, shader, count in plan)
     if two:
         _combo(combos, ENV_COMBOS[0x8000])
     out_skins = []
@@ -380,7 +388,7 @@ def wotlk_layers(m2: bytes, skins: list[bytes], source_skins: list[bytes], *,
                 struct.pack_into("<H", over, 0x0C, struct.unpack_from("<H", batch, 0x0C)[0] + 1)
                 batches += [batch, over]
                 redrawn += 1
-            elif count >= 2 and shader == SHADER_ADD_LAYER:
+            elif count >= 2 and shader in add_layers:
                 struct.pack_into("<H", batch, 2, single)
                 struct.pack_into("<H", batch, 0x0E, 1)
                 over = bytearray(batch)
@@ -393,7 +401,7 @@ def wotlk_layers(m2: bytes, skins: list[bytes], source_skins: list[bytes], *,
                 struct.pack_into("<H", over, 0x0C, struct.unpack_from("<H", batch, 0x0C)[0] + 1)
                 batches += [batch, over]
                 redrawn += 1
-            elif count >= 2 and two and own_ops and not shader & SHADER_TABLE:
+            elif count >= 2 and own_ops and not shader & SHADER_TABLE:
                 struct.pack_into("<H", batch, 2, _combo(combos, ((shader >> 4) & 7, shader & 7)))
                 batches.append(batch)
                 redrawn += 1
@@ -417,9 +425,11 @@ def wotlk_layers(m2: bytes, skins: list[bytes], source_skins: list[bytes], *,
 
 
 def needs_layers(source_skins: list[bytes]) -> bool:
-    """Whether a BfA model's batches draw a reflection 3.3.5 can only draw through ``wotlk_layers``'
-    combiner table. Without one a converted model's batches draw as BfA's do (a create scene's do)."""
-    return any(struct.unpack_from("<H", b, 0x0E)[0] >= 2 and struct.unpack_from("<H", b, 2)[0] in ENV_COMBOS
+    """Whether a BfA scene's batches draw a reflection 3.3.5 can only draw through ``wotlk_layers``'
+    combiner table, or a texture added over the diffuse it can only draw as a layer of its own.
+    Without one a converted model's batches draw as BfA's do (a create scene's do)."""
+    return any(struct.unpack_from("<H", b, 0x0E)[0] >= 2
+               and struct.unpack_from("<H", b, 2)[0] in ENV_COMBOS.keys() | SCENE_ADD_LAYERS
                for skin in source_skins for b in _batches(skin))
 
 

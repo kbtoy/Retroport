@@ -273,6 +273,29 @@ def test_a_scene_without_a_reflection_is_left_as_converted(tmp_path):
     assert len(_skin_batches((tmp_path / "UI_Scene00.skin").read_bytes())) == 3
 
 
+def test_a_scenes_added_glows_are_layers_of_their_own():
+    """The Mag'har select scene: a bonfire and a lamppost draw their glow over the diffuse (0x800A,
+    Opaque_AddAlpha_Wgt, both on the first UV set) - black when 3.3.5 multiplied them together -
+    beside god rays through their mask (0x4011: Mod, Mod) and a cloud (0x10)."""
+    from wotlkconv.m2.model import parse_md20
+    m2, skin, source = _layered(5, [(0, 0), (0x15, 4)], ([1, 2, 3, 4, 1], [0, 0, 0, 0, 0], [0, 1]),
+                                [(0x800A, 2, 0, 0x80, 0), (0x4011, 2, 1, 0x88, 2), (0x10, 1, 1, 0x10, 4)])
+    assert helmets.needs_layers([source])
+    out, (out_skin,), redrawn = helmets.wotlk_layers(m2, [skin], [source], own_ops=True)
+    model = parse_md20(out)
+    combos = model.texture_combiner_combos
+    assert model.global_flags & helmets.COMBINER_COMBOS and redrawn == 3
+    base, glow, rays, cloud = _skin_batches(out_skin)
+    assert (base[8], base[9], combos[base[2]]) == (1, 0, 1)                                # the diffuse, Mod
+    assert (glow[8], glow[9], glow[10], glow[11], glow[7]) == (1, 1, 1, 1, 1)              # the glow, its UVs, weight
+    assert model.materials[glow[6]] == {"flags": 16, "blending_mode": 4}                   # added
+    assert (rays[8], rays[9], tuple(combos[rays[2]:rays[2] + 2])) == (2, 2, (1, 1))        # rays x mask
+    assert (cloud[8], combos[cloud[2]]) == (1, 1)
+    # a helmet's 0x800A draws its diffuse alone, as WarcraftXL's own helmets do
+    out, (out_skin,), _redrawn = helmets.wotlk_layers(m2, [skin], [source])
+    assert len(_skin_batches(out_skin)) == 3 and _skin_batches(out_skin)[0][8] == 1
+
+
 def _emitter(rows: int, cols: int, head: list[int], z: float) -> dict:
     """A particle emitter with every field of 3.3.5's layout at its zero, but these."""
     from wotlkconv.m2 import schemas
