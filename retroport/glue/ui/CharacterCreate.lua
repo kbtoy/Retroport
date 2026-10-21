@@ -12,10 +12,15 @@ MAX_RACES = 32;
 MAX_CLASSES_PER_RACE = 10;
 NUM_CHAR_CUSTOMIZATIONS = 5;
 -- the x64 client (WarcraftXL's native retail characters) offers a race's retail options instead:
--- this many rows of them to a page, the banner growing by a row's height for each past five
-CHARCREATE_CUSTOMIZATION_ROWS = 9;
-CHARCREATE_CUSTOMIZATION_ROW_HEIGHT = 46;
-CHARCREATE_CUSTOMIZATION_BANNER = 210;
+-- this many rows of them to a page; the banner's middle is as tall as its rows plus
+-- CHARCREATE_CUSTOMIZATION_BANNER (its caps cover the rest)
+CHARCREATE_CUSTOMIZATION_ROWS = 11;
+CHARCREATE_CUSTOMIZATION_ROW_HEIGHT = 40;
+CHARCREATE_CUSTOMIZATION_BANNER = -20;
+-- Randomize, narrower when the page arrows sit either side of it
+CHARCREATE_RANDOMIZE_WIDTH, CHARCREATE_RANDOMIZE_PAGED_WIDTH = 146, 112;
+-- the customize zoom moves to a new head only past this many yards (a breathing head stays put)
+CHARCREATE_ZOOM_SETTLE = 0.12;
 MIN_CHAR_NAME_LENGTH = 2;
 CHARACTER_CREATE_ROTATION_START_X = nil;
 CHARACTER_CREATE_INITIAL_FACING = nil;
@@ -857,13 +862,15 @@ function CharacterCreate_UpdateCustomizationRows()
 			row:Hide();
 		end
 	end
-	CharCreateCustomizationBannerMiddle:SetHeight(CHARCREATE_CUSTOMIZATION_BANNER + (last - NUM_CHAR_CUSTOMIZATIONS) * CHARCREATE_CUSTOMIZATION_ROW_HEIGHT);
+	CharCreateCustomizationBannerMiddle:SetHeight(CHARCREATE_CUSTOMIZATION_BANNER + last * CHARCREATE_CUSTOMIZATION_ROW_HEIGHT);
 	CharCreateRandomizeButton:ClearAllPoints();
-	CharCreateRandomizeButton:SetPoint("TOP", "CharacterCustomizationButtonFrame"..math.max(last, 1), "BOTTOM", 0, -16);
+	CharCreateRandomizeButton:SetPoint("TOP", "CharacterCustomizationButtonFrame"..math.max(last, 1), "BOTTOM", 0, -12);
 	if ( pages > 1 ) then
+		CharCreateRandomizeButton:SetWidth(CHARCREATE_RANDOMIZE_PAGED_WIDTH);
 		CharCreateCustomizationPrevPage:Show();
 		CharCreateCustomizationNextPage:Show();
 	else
+		CharCreateRandomizeButton:SetWidth(CHARCREATE_RANDOMIZE_WIDTH);
 		CharCreateCustomizationPrevPage:Hide();
 		CharCreateCustomizationNextPage:Hide();
 	end
@@ -940,6 +947,7 @@ local function CharCreate_ZoomCamera()
 	if ( not head ) then
 		return nil;
 	end
+	CharacterCreate.zoomHeadNow = head[1];
 	local k = math.floor((head[1] - zoom.first) / zoom.step + 0.5);
 	local j = math.floor((head[2] or 0) / zoom.forwardStep + 0.5);
 	k = math.max(0, math.min(zoom.count - 1, k));
@@ -965,6 +973,7 @@ function CharacterCreate_Zoom(zoomIn, retarget)
 			at = 0;
 		end
 		CharacterCreate.zoomCamera = camera;
+		CharacterCreate.zoomHead = CharacterCreate.zoomHeadNow;
 		CharacterCreate:SetCamera(camera);
 		CharacterCreate:SetSequenceTime(zoom.zoomIn, at * zoom.glide * 1000);
 		CharacterCreate.zoomTo = 1;
@@ -998,15 +1007,22 @@ function CharacterCreate_UpdateZoom(elapsed)
 end
 
 -- Zoomed in, the head moved (the character settled into Stand, a new model loaded): the glide goes
--- on, to the camera of where the head is now.
+-- on, to the camera of where the head is now. Not for a head that only breathes: that would hop
+-- between neighbouring cameras.
 function CharacterCreate_RetargetZoom()
-	if ( CharacterCreate.zoomTo == 1 and CharacterCreate.zoomCamera and CharCreate_ZoomCamera() ~= CharacterCreate.zoomCamera ) then
+	if ( CharacterCreate.zoomTo ~= 1 or not CharacterCreate.zoomCamera ) then
+		return;
+	end
+	local camera = CharCreate_ZoomCamera();
+	local now, was = CharacterCreate.zoomHeadNow, CharacterCreate.zoomHead;
+	if ( camera and camera ~= CharacterCreate.zoomCamera and (not now or not was or math.abs(now - was) > CHARCREATE_ZOOM_SETTLE) ) then
 		CharacterCreate_Zoom(true, true);
 	end
 end
 
 function CharacterCreate_ResetZoom()
 	CharacterCreate.zoomCamera = nil;
+	CharacterCreate.zoomHead = nil;
 	CharacterCreate.zoomTo = nil;
 	CharacterCreate.zoomAt = 0;
 end

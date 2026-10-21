@@ -504,18 +504,11 @@
 
 	<!-- a customization row: BfA's customization button art, its name, and 3.3.5's arrows (BfA picks
 	     a style from rendered previews 3.3.5 can't make) -->
+	<!-- a row: its text between its arrows, on the banner (no plate: the 3.3.5 one is wider than
+	     the banner and taller than a row) -->
 	<Frame name="CharCreateCustomizationRowTemplate" virtual="true">
-		<Size x="200" y="46"/>
+		<Size x="200" y="40"/>
 		<Layers>
-			<Layer level="BACKGROUND">
-				<Texture name="$parentBg" file="Interface\Glues\CharacterCreate\UI-CharacterCreatePatchwerk">
-					<Size x="214" y="85"/>
-					<Anchors>
-						<Anchor point="CENTER" x="0" y="0"/>
-					</Anchors>
-					<TexCoords left="0.00195313" right="0.41992188" top="0.77343750" bottom="0.85644531"/>
-				</Texture>
-			</Layer>
 			<Layer level="ARTWORK">
 				<FontString name="$parentText" inherits="GlueFontNormal">
 					<Anchors>
@@ -818,6 +811,16 @@
 									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame8" relativePoint="BOTTOM" x="0" y="0"/>
 								</Anchors>
 							</Frame>
+							<Frame name="CharacterCustomizationButtonFrame10" inherits="CharCreateCustomizationRowTemplate" id="10" hidden="true">
+								<Anchors>
+									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame9" relativePoint="BOTTOM" x="0" y="0"/>
+								</Anchors>
+							</Frame>
+							<Frame name="CharacterCustomizationButtonFrame11" inherits="CharCreateCustomizationRowTemplate" id="11" hidden="true">
+								<Anchors>
+									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame10" relativePoint="BOTTOM" x="0" y="0"/>
+								</Anchors>
+							</Frame>
 							<Button name="CharCreateRandomizeButton" inherits="GlueButtonSmallTemplate" text="RANDOMIZE">
 								<Size x="146" y="34"/>
 								<Anchors>
@@ -833,7 +836,7 @@
 								</Scripts>
 							</Button>
 							<Button name="CharCreateCustomizationPrevPage" hidden="true">
-								<Size x="32" y="32"/>
+								<Size x="26" y="26"/>
 								<Anchors>
 									<Anchor point="RIGHT" relativeTo="CharCreateRandomizeButton" relativePoint="LEFT" x="-2" y="0"/>
 								</Anchors>
@@ -847,7 +850,7 @@
 								<HighlightTexture file="Interface\Glues\Common\Glue-LeftArrow-Button-Highlight" alphaMode="ADD"/>
 							</Button>
 							<Button name="CharCreateCustomizationNextPage" hidden="true">
-								<Size x="32" y="32"/>
+								<Size x="26" y="26"/>
 								<Anchors>
 									<Anchor point="LEFT" relativeTo="CharCreateRandomizeButton" relativePoint="RIGHT" x="2" y="0"/>
 								</Anchors>
