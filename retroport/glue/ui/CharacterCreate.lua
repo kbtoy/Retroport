@@ -17,6 +17,7 @@ NUM_CHAR_CUSTOMIZATIONS = 5;
 CHARCREATE_CUSTOMIZATION_ROWS = 11;
 CHARCREATE_CUSTOMIZATION_ROW_HEIGHT = 40;
 CHARCREATE_CUSTOMIZATION_BANNER = -20;
+CHARCREATE_CUSTOMIZATION_TEXT_WIDTH = 132;   -- room for a row's text between its arrows
 -- Randomize, narrower when the page arrows sit either side of it
 CHARCREATE_RANDOMIZE_WIDTH, CHARCREATE_RANDOMIZE_PAGED_WIDTH = 146, 112;
 -- the customize zoom moves to a new head only past this many yards (a breathing head stays put)
@@ -852,7 +853,13 @@ function CharacterCreate_UpdateCustomizationRows()
 			if ( not name or name == "" ) then
 				name = CUSTOMIZE;
 			end
-			_G["CharacterCustomizationButtonFrame"..i.."Text"]:SetText(name.."  "..at.."/"..(choices and #choices or option.count));
+			local text = _G["CharacterCustomizationButtonFrame"..i.."Text"];
+			text:SetFontObject(GlueFontNormal);
+			text:SetText(name.."  "..at.."/"..(choices and #choices or option.count));
+			-- a long name (War Paint Color 2/4) is drawn smaller rather than over the arrows
+			if ( text:GetStringWidth() > CHARCREATE_CUSTOMIZATION_TEXT_WIDTH and GlueFontNormalSmall ) then
+				text:SetFontObject(GlueFontNormalSmall);
+			end
 			row:Show();
 			last = i;
 		elseif ( not options and i <= NUM_CHAR_CUSTOMIZATIONS ) then
@@ -936,11 +943,16 @@ local function CharCreate_ZoomCamera()
 	local _, fileString = GetNameForRace();
 	local key = strupper(fileString or "").."_"..CharCreate_Gender();
 	local head = CHARCREATE_ZOOM_HEAD[key];
-	-- the x64 client measures the character it draws (a retail body is not the one the table was
-	-- measured on): its head as it stands now
+	-- the x64 client can measure the character it draws; the table (the glue build's measure of
+	-- the same HD bodies) comes first, the live head for a race without a row. Both traced once.
 	if ( type(WXL_GetCreationHeadSpot) == "function" ) then
 		local up, forward = WXL_GetCreationHeadSpot();
-		if ( up ) then
+		if ( up and CharacterCreate.zoomTraced ~= key and type(_WXL_CC_PREVIEW_TRACE) == "function" ) then
+			CharacterCreate.zoomTraced = key;
+			_WXL_CC_PREVIEW_TRACE(string.format("zoom %s table=%s live=%.3f/%.3f", key,
+				head and string.format("%.3f/%.3f", head[1], head[2] or 0) or "none", up, forward or 0));
+		end
+		if ( up and not head ) then
 			head = { up, math.max(0, forward or 0) };
 		end
 	end
