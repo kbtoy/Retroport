@@ -797,6 +797,27 @@
 									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame4" relativePoint="BOTTOM" x="0" y="0"/>
 								</Anchors>
 							</Frame>
+							<!-- rows 6-9: the x64 client's retail options (CharacterCreate_UpdateCustomizationRows) -->
+							<Frame name="CharacterCustomizationButtonFrame6" inherits="CharCreateCustomizationRowTemplate" id="6" hidden="true">
+								<Anchors>
+									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame5" relativePoint="BOTTOM" x="0" y="0"/>
+								</Anchors>
+							</Frame>
+							<Frame name="CharacterCustomizationButtonFrame7" inherits="CharCreateCustomizationRowTemplate" id="7" hidden="true">
+								<Anchors>
+									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame6" relativePoint="BOTTOM" x="0" y="0"/>
+								</Anchors>
+							</Frame>
+							<Frame name="CharacterCustomizationButtonFrame8" inherits="CharCreateCustomizationRowTemplate" id="8" hidden="true">
+								<Anchors>
+									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame7" relativePoint="BOTTOM" x="0" y="0"/>
+								</Anchors>
+							</Frame>
+							<Frame name="CharacterCustomizationButtonFrame9" inherits="CharCreateCustomizationRowTemplate" id="9" hidden="true">
+								<Anchors>
+									<Anchor point="TOP" relativeTo="CharacterCustomizationButtonFrame8" relativePoint="BOTTOM" x="0" y="0"/>
+								</Anchors>
+							</Frame>
 							<Button name="CharCreateRandomizeButton" inherits="GlueButtonSmallTemplate" text="RANDOMIZE">
 								<Size x="146" y="34"/>
 								<Anchors>
@@ -810,6 +831,34 @@
 										CharacterCreate_DeathKnightSwap(self);
 									</OnUpdate>
 								</Scripts>
+							</Button>
+							<Button name="CharCreateCustomizationPrevPage" hidden="true">
+								<Size x="32" y="32"/>
+								<Anchors>
+									<Anchor point="RIGHT" relativeTo="CharCreateRandomizeButton" relativePoint="LEFT" x="-2" y="0"/>
+								</Anchors>
+								<Scripts>
+									<OnClick>
+										CharacterCreate_CustomizationPage(-1);
+									</OnClick>
+								</Scripts>
+								<NormalTexture file="Interface\Glues\Common\Glue-LeftArrow-Button-Up"/>
+								<PushedTexture file="Interface\Glues\Common\Glue-LeftArrow-Button-Down"/>
+								<HighlightTexture file="Interface\Glues\Common\Glue-LeftArrow-Button-Highlight" alphaMode="ADD"/>
+							</Button>
+							<Button name="CharCreateCustomizationNextPage" hidden="true">
+								<Size x="32" y="32"/>
+								<Anchors>
+									<Anchor point="LEFT" relativeTo="CharCreateRandomizeButton" relativePoint="RIGHT" x="2" y="0"/>
+								</Anchors>
+								<Scripts>
+									<OnClick>
+										CharacterCreate_CustomizationPage(1);
+									</OnClick>
+								</Scripts>
+								<NormalTexture file="Interface\Glues\Common\Glue-RightArrow-Button-Up"/>
+								<PushedTexture file="Interface\Glues\Common\Glue-RightArrow-Button-Down"/>
+								<HighlightTexture file="Interface\Glues\Common\Glue-RightArrow-Button-Highlight" alphaMode="ADD"/>
 							</Button>
 						</Frames>
 					</Frame>

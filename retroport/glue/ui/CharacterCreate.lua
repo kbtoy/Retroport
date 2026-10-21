@@ -11,6 +11,11 @@ CHARACTER_FACING_INCREMENT = 2;
 MAX_RACES = 32;
 MAX_CLASSES_PER_RACE = 10;
 NUM_CHAR_CUSTOMIZATIONS = 5;
+-- the x64 client (WarcraftXL's native retail characters) offers a race's retail options instead:
+-- this many rows of them to a page, the banner growing by a row's height for each past five
+CHARCREATE_CUSTOMIZATION_ROWS = 9;
+CHARCREATE_CUSTOMIZATION_ROW_HEIGHT = 46;
+CHARCREATE_CUSTOMIZATION_BANNER = 210;
 MIN_CHAR_NAME_LENGTH = 2;
 CHARACTER_CREATE_ROTATION_START_X = nil;
 CHARACTER_CREATE_INITIAL_FACING = nil;
@@ -203,6 +208,7 @@ function CharacterCreate_OnHide()
 	PAID_SERVICE_TYPE = nil;
 	CharacterCreateTooltip:Hide();
 	CharacterCreate_ResetZoom();
+	CharacterCreate_SetShowcasePaused(false);
 end
 
 function CharacterCreateFrame_OnMouseDown(button)
@@ -220,6 +226,7 @@ end
 
 function CharacterCreateFrame_OnUpdate(self, elapsed)
 	CharacterCreate_UpdateZoom(elapsed);
+	CharacterCreate_PollCustomization(elapsed);
 	if ( CHARACTER_CREATE_ROTATION_START_X ) then
 		local x = GetCursorPosition();
 		local diff = (x - CHARACTER_CREATE_ROTATION_START_X) * CHARACTER_ROTATION_CONSTANT;
@@ -272,6 +279,19 @@ function CharacterCreate_SetState(state)
 	CharacterCreate_UpdateOkayGlow();
 	CharacterCreate_UpdateRacesToggleButton();
 	CharacterCreate_Zoom(state == "CUSTOMIZATION");
+	CharacterCreate_SetShowcasePaused(state == "CUSTOMIZATION");
+	if ( state == "CUSTOMIZATION" ) then
+		CharacterCreate.customizationPage = 1;
+		CharacterCreate_UpdateHairCustomization();
+	end
+end
+
+-- The x64 client's class showcase (WarcraftXL creation effects) plays on the race and class step;
+-- customizing, the character stands still.
+function CharacterCreate_SetShowcasePaused(paused)
+	if ( type(WXL_SetCreationEffectsCustomizationOpen) == "function" ) then
+		WXL_SetCreationEffectsCustomizationOpen(paused and true or false);
+	end
 end
 
 function CharacterCreate_Forward()
@@ -734,23 +754,166 @@ end
 
 function CharacterCustomization_Left(id)
 	PlaySound("gsCharacterCreationLook");
-	CycleCharCustomization(id, -1);
+	if ( not CharacterCreate_CycleRetail(id, -1) ) then
+		CycleCharCustomization(id, -1);
+	end
 end
 
 function CharacterCustomization_Right(id)
 	PlaySound("gsCharacterCreationLook");
-	CycleCharCustomization(id, 1);
+	if ( not CharacterCreate_CycleRetail(id, 1) ) then
+		CycleCharCustomization(id, 1);
+	end
 end
 
 function CharacterCreate_Randomize()
 	PlaySound("gsCharacterCreationLook");
 	RandomizeCharCustomization();
+	CharacterCreate_UpdateHairCustomization();
 end
 
 function CharacterCreate_UpdateHairCustomization()
+	if ( CharacterCreate_UpdateCustomizationRows() ) then
+		return;
+	end
+	for i=1, 2 do
+		_G["CharacterCustomizationButtonFrame"..i.."Text"]:SetText(_G["CHAR_CUSTOMIZATION"..i.."_DESC"]);
+	end
 	CharacterCustomizationButtonFrame3Text:SetText(_G["HAIR_"..GetHairCustomization().."_STYLE"]);
 	CharacterCustomizationButtonFrame4Text:SetText(_G["HAIR_"..GetHairCustomization().."_COLOR"]);
 	CharacterCustomizationButtonFrame5Text:SetText(_G["FACIAL_HAIR_"..GetFacialHairCustomization()]);
+end
+
+-- --------------------------------------------------------------------------- retail options
+
+-- The x64 client draws a race with its retail body and offers its retail options (WarcraftXL:
+-- WXL_GetRetailOptions, _GetRetailChoices, _GetRetailSelection, WXL_SetRetailChoice): each option
+-- with more than one choice gets a row, its name and where its choice stands among its choices,
+-- CHARCREATE_CUSTOMIZATION_ROWS to a page. The 3.3.5 client, or a race still on its 3.3.5 body,
+-- keeps the five classic rows.
+local function CharCreate_RetailOptions()
+	if ( type(WXL_GetRetailOptions) ~= "function" ) then
+		return nil;
+	end
+	local all = WXL_GetRetailOptions();
+	if ( type(all) ~= "table" or #all == 0 ) then
+		return nil;
+	end
+	local selection = type(WXL_GetRetailSelection) == "function" and WXL_GetRetailSelection() or {};
+	local options = {};
+	for i, option in ipairs(all) do
+		if ( (option.count or 0) > 1 ) then
+			option.selected = selection[i];
+			table.insert(options, option);
+		end
+	end
+	if ( #options == 0 ) then
+		return nil;
+	end
+	return options;
+end
+
+-- An option's choices and the place of its current one among them.
+local function CharCreate_RetailChoice(option)
+	local choices = type(WXL_GetRetailChoices) == "function" and WXL_GetRetailChoices(option.id) or nil;
+	if ( type(choices) ~= "table" or #choices == 0 ) then
+		return nil, 0;
+	end
+	for i, choice in ipairs(choices) do
+		if ( choice.id == option.selected ) then
+			return choices, i;
+		end
+	end
+	return choices, 1;
+end
+
+-- Fills the rows from the retail options; false (rows as 3.3.5 has them) when there are none.
+function CharacterCreate_UpdateCustomizationRows()
+	local options = CharCreate_RetailOptions();
+	CharacterCreate.retailOptions = options;
+	CharacterCreate.retailContext = type(WXL_GetRetailChoiceContext) == "function" and WXL_GetRetailChoiceContext() or nil;
+	local perPage = options and CHARCREATE_CUSTOMIZATION_ROWS or NUM_CHAR_CUSTOMIZATIONS;
+	local pages = options and math.ceil(#options / perPage) or 1;
+	local page = math.max(1, math.min(CharacterCreate.customizationPage or 1, pages));
+	CharacterCreate.customizationPage = page;
+	local last = 0;
+	for i=1, CHARCREATE_CUSTOMIZATION_ROWS do
+		local row = _G["CharacterCustomizationButtonFrame"..i];
+		local option = options and options[(page - 1) * perPage + i];
+		row.option = option;
+		if ( option ) then
+			local choices, at = CharCreate_RetailChoice(option);
+			local name = option.name;
+			if ( not name or name == "" ) then
+				name = CUSTOMIZE;
+			end
+			_G["CharacterCustomizationButtonFrame"..i.."Text"]:SetText(name.."  "..at.."/"..(choices and #choices or option.count));
+			row:Show();
+			last = i;
+		elseif ( not options and i <= NUM_CHAR_CUSTOMIZATIONS ) then
+			row:Show();
+			last = i;
+		else
+			row:Hide();
+		end
+	end
+	CharCreateCustomizationBannerMiddle:SetHeight(CHARCREATE_CUSTOMIZATION_BANNER + (last - NUM_CHAR_CUSTOMIZATIONS) * CHARCREATE_CUSTOMIZATION_ROW_HEIGHT);
+	CharCreateRandomizeButton:ClearAllPoints();
+	CharCreateRandomizeButton:SetPoint("TOP", "CharacterCustomizationButtonFrame"..math.max(last, 1), "BOTTOM", 0, -16);
+	if ( pages > 1 ) then
+		CharCreateCustomizationPrevPage:Show();
+		CharCreateCustomizationNextPage:Show();
+	else
+		CharCreateCustomizationPrevPage:Hide();
+		CharCreateCustomizationNextPage:Hide();
+	end
+	return options ~= nil;
+end
+
+-- Steps a retail row's option to its next or previous choice; false on a classic row.
+function CharacterCreate_CycleRetail(id, delta)
+	local row = _G["CharacterCustomizationButtonFrame"..id];
+	local option = row and row.option;
+	if ( not option or type(WXL_SetRetailChoice) ~= "function" ) then
+		return false;
+	end
+	local choices, at = CharCreate_RetailChoice(option);
+	if ( choices ) then
+		local nextAt = (at - 1 + delta) % #choices + 1;
+		WXL_SetRetailChoice(option.id, choices[nextAt].id);
+	end
+	CharacterCreate_UpdateHairCustomization();
+	return true;
+end
+
+function CharacterCreate_CustomizationPage(delta)
+	PlaySound("gsCharacterCreationLook");
+	CharacterCreate.customizationPage = (CharacterCreate.customizationPage or 1) + delta;
+	local options = CharacterCreate.retailOptions;
+	local pages = options and math.ceil(#options / CHARCREATE_CUSTOMIZATION_ROWS) or 1;
+	if ( CharacterCreate.customizationPage > pages ) then
+		CharacterCreate.customizationPage = 1;
+	elseif ( CharacterCreate.customizationPage < 1 ) then
+		CharacterCreate.customizationPage = pages;
+	end
+	CharacterCreate_UpdateHairCustomization();
+end
+
+-- The native character rebuilds on its own (a race, sex or class change, a randomize): the rows
+-- follow it whenever its choices change.
+function CharacterCreate_PollCustomization(elapsed)
+	if ( type(WXL_GetRetailChoiceContext) ~= "function" or not CharCreateCustomizationFrame:IsShown() ) then
+		return;
+	end
+	CharacterCreate.retailWait = (CharacterCreate.retailWait or 0) - (elapsed or 0);
+	if ( CharacterCreate.retailWait > 0 ) then
+		return;
+	end
+	CharacterCreate.retailWait = 0.2;
+	if ( WXL_GetRetailChoiceContext() ~= CharacterCreate.retailContext ) then
+		CharacterCreate_UpdateHairCustomization();
+	end
+	CharacterCreate_RetargetZoom();
 end
 
 -- --------------------------------------------------------------------------- the customize zoom
@@ -766,6 +929,14 @@ local function CharCreate_ZoomCamera()
 	local _, fileString = GetNameForRace();
 	local key = strupper(fileString or "").."_"..CharCreate_Gender();
 	local head = CHARCREATE_ZOOM_HEAD[key];
+	-- the x64 client measures the character it draws (a retail body is not the one the table was
+	-- measured on): its head as it stands now
+	if ( type(WXL_GetCreationHeadSpot) == "function" ) then
+		local up, forward = WXL_GetCreationHeadSpot();
+		if ( up ) then
+			head = { up, math.max(0, forward or 0) };
+		end
+	end
 	if ( not head ) then
 		return nil;
 	end
@@ -779,7 +950,7 @@ end
 
 -- Glide to the head (zoomIn) or back to the scene's view, from wherever the glide is: zoomAt is
 -- how far it has come (0: the scene's view, 1: the head), zoomTo where it's going.
-function CharacterCreate_Zoom(zoomIn)
+function CharacterCreate_Zoom(zoomIn, retarget)
 	local zoom = CHARCREATE_ZOOM;
 	if ( not zoom ) then
 		return;
@@ -790,7 +961,7 @@ function CharacterCreate_Zoom(zoomIn)
 		if ( not camera ) then
 			return;
 		end
-		if ( camera ~= CharacterCreate.zoomCamera ) then
+		if ( camera ~= CharacterCreate.zoomCamera and not retarget ) then
 			at = 0;
 		end
 		CharacterCreate.zoomCamera = camera;
@@ -823,6 +994,14 @@ function CharacterCreate_UpdateZoom(elapsed)
 		CharacterCreate:SetCamera(0);
 		CharacterCreate:SetSequence(0);
 		CharacterCreate_ResetZoom();
+	end
+end
+
+-- Zoomed in, the head moved (the character settled into Stand, a new model loaded): the glide goes
+-- on, to the camera of where the head is now.
+function CharacterCreate_RetargetZoom()
+	if ( CharacterCreate.zoomTo == 1 and CharacterCreate.zoomCamera and CharCreate_ZoomCamera() ~= CharacterCreate.zoomCamera ) then
+		CharacterCreate_Zoom(true, true);
 	end
 end
 
