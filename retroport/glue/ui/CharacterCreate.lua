@@ -63,6 +63,23 @@ CHARCREATE_FACTION_SCENES = { Alliance = "Alliance", Horde = "Horde" };
 -- races 3.3.5 shipped, a race package's for its own (both at the end of this file)
 CHARCREATE_ZOOM_HEAD = CHARCREATE_ZOOM_HEAD or {};
 CHARCREATE_ZOOM_WIDE = CHARCREATE_ZOOM_WIDE or {};      -- RACE_SEX -> a wider view (CHARCREATE_ZOOM.widths)
+-- the x64 client draws retail's own bodies, standing in Stand: their heads (glue/zoom.py's head_spot
+-- on each body with its skeleton embedded), body file -> { up, forward, wider view }, before the
+-- RACE_SEX rows (measured on 3.3.5's HD bodies, 0.1-0.2 yards higher; the tauren a different model)
+CHARCREATE_ZOOM_BODY = CHARCREATE_ZOOM_BODY or {
+	bloodelffemale_hd = { 1.567, 0.000, 1 }, bloodelfmale_hd = { 1.843, 0.000, 1 },
+	draeneifemale_hd = { 1.958, 0.000, 1 }, draeneimale_hd = { 2.101, 0.196, 2 },
+	dwarffemale_hd = { 1.149, 0.000, 1 }, dwarfmale_hd = { 1.224, 0.025, 1 },
+	gnomefemale_hd = { 0.640, 0.000, 1 }, gnomemale_hd = { 0.694, 0.000, 1 },
+	humanfemale_hd = { 1.540, 0.006, 1 }, humanmale_hd = { 1.700, 0.001, 1 },
+	nightelffemale_hd = { 1.867, 0.040, 1 }, nightelfmale_hd = { 2.062, 0.022, 1 },
+	orcfemale_hd = { 1.811, 0.000, 1 }, orcmale_hd = { 1.743, 0.370, 2 }, orcmaleupright = { 1.956, 0.011, 2 },
+	scourgefemale_hd = { 1.497, 0.167, 1 }, scourgemale_hd = { 1.450, 0.076, 1 },
+	taurenfemale_hd = { 2.495, 0.301, 2 }, taurenmale_hd = { 2.463, 0.696, 2 },
+	trollfemale_hd = { 2.157, 0.000, 1 }, trollmale_hd = { 1.946, 0.507, 2 },
+	kultiranfemale = { 2.017, 0.000, 1 }, kultiranmale = { 2.174, 0.119, 2 },
+	pandarenfemale = { 1.727, 0.000, 1 }, pandarenmale = { 1.926, 0.000, 2 },
+};
 
 -- race icons: BfA's, sharp (RACE_ICON_ATLAS: RACE_SEX -> { left, right, top, bottom [, file] } in
 -- RACE_ICON_ATLAS_FILE, filled at the end of this file); a race without one keeps its icon in
@@ -942,14 +959,16 @@ local function CharCreate_ZoomCamera()
 	end
 	local _, fileString = GetNameForRace();
 	local key = strupper(fileString or "").."_"..CharCreate_Gender();
-	local head = CHARCREATE_ZOOM_HEAD[key];
-	-- the x64 client can measure the character it draws; the table (the glue build's measure of
-	-- the same HD bodies) comes first, the live head for a race without a row. Both traced once.
+	-- the x64 client names the body it draws (a posture is a body of its own): its row first, then
+	-- the race's, then the live head for a race with neither. Traced once per body.
+	local body = type(WXL_GetCreationBody) == "function" and WXL_GetCreationBody() or nil;
+	local head = body and CHARCREATE_ZOOM_BODY[body] or CHARCREATE_ZOOM_HEAD[key];
 	if ( type(WXL_GetCreationHeadSpot) == "function" ) then
 		local up, forward = WXL_GetCreationHeadSpot();
-		if ( up and CharacterCreate.zoomTraced ~= key and type(_WXL_CC_PREVIEW_TRACE) == "function" ) then
-			CharacterCreate.zoomTraced = key;
-			_WXL_CC_PREVIEW_TRACE(string.format("zoom %s table=%s live=%.3f/%.3f", key,
+		local traced = key.."/"..(body or "?");
+		if ( up and CharacterCreate.zoomTraced ~= traced and type(_WXL_CC_PREVIEW_TRACE) == "function" ) then
+			CharacterCreate.zoomTraced = traced;
+			_WXL_CC_PREVIEW_TRACE(string.format("zoom %s body=%s table=%s live=%.3f/%.3f", key, body or "?",
 				head and string.format("%.3f/%.3f", head[1], head[2] or 0) or "none", up, forward or 0));
 		end
 		if ( up and not head ) then
@@ -964,7 +983,7 @@ local function CharCreate_ZoomCamera()
 	local j = math.floor((head[2] or 0) / zoom.forwardStep + 0.5);
 	k = math.max(0, math.min(zoom.count - 1, k));
 	j = math.max(0, math.min(zoom.forwards - 1, j));
-	local w = math.max(0, math.min((zoom.widths or 1) - 1, CHARCREATE_ZOOM_WIDE[key] or 0));
+	local w = math.max(0, math.min((zoom.widths or 1) - 1, head[3] or CHARCREATE_ZOOM_WIDE[key] or 0));
 	return zoom.camera + (w * zoom.forwards + j) * zoom.count + k;
 end
 
