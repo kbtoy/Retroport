@@ -65,20 +65,22 @@ CHARCREATE_ZOOM_HEAD = CHARCREATE_ZOOM_HEAD or {};
 CHARCREATE_ZOOM_WIDE = CHARCREATE_ZOOM_WIDE or {};      -- RACE_SEX -> a wider view (CHARCREATE_ZOOM.widths)
 -- the x64 client draws retail's own bodies, standing in Stand: their heads (glue/zoom.py's head_spot
 -- on each body with its skeleton embedded), body file -> { up, forward, wider view }, before the
--- RACE_SEX rows (measured on 3.3.5's HD bodies, 0.1-0.2 yards higher; the tauren a different model)
+-- RACE_SEX rows (measured on 3.3.5's HD bodies, 0.1-0.2 yards higher; the tauren a different model).
+-- The widest view for all but the blood elf man, and the dwarf and Kul Tiran men, the blood elf and
+-- pandaren women raised: a test player found their views low and close (2026-10-22 screenshots).
 CHARCREATE_ZOOM_BODY = CHARCREATE_ZOOM_BODY or {
-	bloodelffemale_hd = { 1.567, 0.000, 1 }, bloodelfmale_hd = { 1.843, 0.000, 1 },
-	draeneifemale_hd = { 1.958, 0.000, 1 }, draeneimale_hd = { 2.101, 0.196, 2 },
-	dwarffemale_hd = { 1.149, 0.000, 1 }, dwarfmale_hd = { 1.224, 0.025, 1 },
-	gnomefemale_hd = { 0.640, 0.000, 1 }, gnomemale_hd = { 0.694, 0.000, 1 },
-	humanfemale_hd = { 1.540, 0.006, 1 }, humanmale_hd = { 1.700, 0.001, 1 },
-	nightelffemale_hd = { 1.867, 0.040, 1 }, nightelfmale_hd = { 2.062, 0.022, 1 },
-	orcfemale_hd = { 1.811, 0.000, 1 }, orcmale_hd = { 1.743, 0.370, 2 }, orcmaleupright = { 1.956, 0.011, 2 },
-	scourgefemale_hd = { 1.497, 0.167, 1 }, scourgemale_hd = { 1.450, 0.076, 1 },
+	bloodelffemale_hd = { 1.660, 0.000, 2 }, bloodelfmale_hd = { 1.843, 0.000, 1 },
+	draeneifemale_hd = { 1.958, 0.000, 2 }, draeneimale_hd = { 2.101, 0.196, 2 },
+	dwarffemale_hd = { 1.149, 0.000, 2 }, dwarfmale_hd = { 1.310, 0.025, 2 },
+	gnomefemale_hd = { 0.640, 0.000, 2 }, gnomemale_hd = { 0.694, 0.000, 2 },
+	humanfemale_hd = { 1.540, 0.006, 2 }, humanmale_hd = { 1.700, 0.001, 2 },
+	nightelffemale_hd = { 1.867, 0.040, 2 }, nightelfmale_hd = { 2.062, 0.022, 2 },
+	orcfemale_hd = { 1.811, 0.000, 2 }, orcmale_hd = { 1.743, 0.370, 2 }, orcmaleupright = { 1.956, 0.011, 2 },
+	scourgefemale_hd = { 1.497, 0.167, 2 }, scourgemale_hd = { 1.450, 0.076, 2 },
 	taurenfemale_hd = { 2.495, 0.301, 2 }, taurenmale_hd = { 2.463, 0.696, 2 },
-	trollfemale_hd = { 2.157, 0.000, 1 }, trollmale_hd = { 1.946, 0.507, 2 },
-	kultiranfemale = { 2.017, 0.000, 1 }, kultiranmale = { 2.174, 0.119, 2 },
-	pandarenfemale = { 1.727, 0.000, 1 }, pandarenmale = { 1.926, 0.000, 2 },
+	trollfemale_hd = { 2.157, 0.000, 2 }, trollmale_hd = { 1.946, 0.507, 2 },
+	kultiranfemale = { 2.017, 0.000, 2 }, kultiranmale = { 2.330, 0.119, 2 },
+	pandarenfemale = { 1.800, 0.000, 2 }, pandarenmale = { 1.926, 0.000, 2 },
 };
 
 -- race icons: BfA's, sharp (RACE_ICON_ATLAS: RACE_SEX -> { left, right, top, bottom [, file] } in
