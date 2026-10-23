@@ -68,15 +68,18 @@ CHARCREATE_ZOOM_WIDE = CHARCREATE_ZOOM_WIDE or {};      -- RACE_SEX -> a wider v
 -- RACE_SEX rows (measured on 3.3.5's HD bodies, 0.1-0.2 yards higher; the tauren a different model).
 -- The widest view for all but the blood elf man, and the dwarf and Kul Tiran men, the blood elf and
 -- pandaren women raised: a test player found their views low and close (2026-10-22 screenshots).
+-- The gnomes raised to their eyes (head_spot's middle of the head counts the beard and ears: the
+-- man's came out 0.23 low on the screen) and the undead woman stopped short, 0.85 of the way to her
+-- head (2026-10-22 screenshots).
 CHARCREATE_ZOOM_BODY = CHARCREATE_ZOOM_BODY or {
 	bloodelffemale_hd = { 1.660, 0.000, 2 }, bloodelfmale_hd = { 1.843, 0.000, 1 },
 	draeneifemale_hd = { 1.958, 0.000, 2 }, draeneimale_hd = { 2.101, 0.196, 2 },
 	dwarffemale_hd = { 1.149, 0.000, 2 }, dwarfmale_hd = { 1.310, 0.025, 2 },
-	gnomefemale_hd = { 0.640, 0.000, 2 }, gnomemale_hd = { 0.694, 0.000, 2 },
+	gnomefemale_hd = { 0.880, 0.000, 2 }, gnomemale_hd = { 0.920, 0.000, 2 },
 	humanfemale_hd = { 1.540, 0.006, 2 }, humanmale_hd = { 1.700, 0.001, 2 },
 	nightelffemale_hd = { 1.867, 0.040, 2 }, nightelfmale_hd = { 2.062, 0.022, 2 },
 	orcfemale_hd = { 1.811, 0.000, 2 }, orcmale_hd = { 1.743, 0.370, 2 }, orcmaleupright = { 1.956, 0.011, 2 },
-	scourgefemale_hd = { 1.497, 0.167, 2 }, scourgemale_hd = { 1.450, 0.076, 2 },
+	scourgefemale_hd = { 1.497, 0.167, 2, 0.85 }, scourgemale_hd = { 1.450, 0.076, 2 },
 	taurenfemale_hd = { 2.495, 0.301, 2 }, taurenmale_hd = { 2.463, 0.696, 2 },
 	trollfemale_hd = { 2.157, 0.000, 2 }, trollmale_hd = { 1.946, 0.507, 2 },
 	kultiranfemale = { 2.017, 0.000, 2 }, kultiranmale = { 2.330, 0.119, 2 },
@@ -153,6 +156,9 @@ function CharacterCreate_OnLoad(self)
 	CharacterCreateFrame.state = "CLASSRACE";
 
 	SetCharCustomizeFrame("CharacterCreate");
+	-- the wheel zooms the customize view in and out (CharacterCreate_OnMouseWheel)
+	CharacterCreateFrame:EnableMouseWheel(true);
+	CharacterCreateFrame:SetScript("OnMouseWheel", CharacterCreate_OnMouseWheel);
 
 	for i=1, NUM_CHAR_CUSTOMIZATIONS, 1 do
 		_G["CharacterCustomizationButtonFrame"..i.."Text"]:SetText(_G["CHAR_CUSTOMIZATION"..i.."_DESC"]);
@@ -981,6 +987,7 @@ local function CharCreate_ZoomCamera()
 		return nil;
 	end
 	CharacterCreate.zoomHeadNow = head[1];
+	CharacterCreate.zoomStop = head[4] or 1;
 	local k = math.floor((head[1] - zoom.first) / zoom.step + 0.5);
 	local j = math.floor((head[2] or 0) / zoom.forwardStep + 0.5);
 	k = math.max(0, math.min(zoom.count - 1, k));
@@ -989,8 +996,27 @@ local function CharCreate_ZoomCamera()
 	return zoom.camera + (w * zoom.forwards + j) * zoom.count + k;
 end
 
+-- How far along the eased glide the view is at a point of its time, and back (both 0 to 1).
+local function CharCreate_ZoomShare(t)
+	return t * t * t * (t * (6 * t - 15) + 10);
+end
+local function CharCreate_ZoomTime(share)
+	local low, high = 0, 1;
+	for i = 1, 24 do
+		local mid = (low + high) / 2;
+		if ( CharCreate_ZoomShare(mid) < share ) then
+			low = mid;
+		else
+			high = mid;
+		end
+	end
+	return (low + high) / 2;
+end
+
 -- Glide to the head (zoomIn) or back to the scene's view, from wherever the glide is: zoomAt is
--- how far it has come (0: the scene's view, 1: the head), zoomTo where it's going.
+-- how far its time has come (0: the scene's view, 1: the head), zoomTo where it's going - a body's
+-- own stop (CHARCREATE_ZOOM_BODY's fourth value: a share of the way to the head, else all of it),
+-- or where the mouse wheel left it.
 function CharacterCreate_Zoom(zoomIn, retarget)
 	local zoom = CHARCREATE_ZOOM;
 	if ( not zoom ) then
@@ -1009,15 +1035,21 @@ function CharacterCreate_Zoom(zoomIn, retarget)
 		CharacterCreate.zoomHead = CharacterCreate.zoomHeadNow;
 		CharacterCreate:SetCamera(camera);
 		CharacterCreate:SetSequenceTime(zoom.zoomIn, at * zoom.glide * 1000);
-		CharacterCreate.zoomTo = 1;
+		-- a new head keeps where the wheel left the view
+		if ( not (retarget and CharacterCreate.zoomManual) ) then
+			CharacterCreate.zoomManual = nil;
+			CharacterCreate.zoomTo = CharCreate_ZoomTime(CharacterCreate.zoomStop or 1);
+		end
 	elseif ( CharacterCreate.zoomCamera ) then
-		CharacterCreate:SetSequenceTime(zoom.zoomOut, (1 - at) * zoom.glide * 1000);
+		CharacterCreate.zoomManual = nil;
 		CharacterCreate.zoomTo = 0;
 	end
 	CharacterCreate.zoomAt = at;
 end
 
--- The glide's progress; out at the scene's view, back on its own camera.
+-- The glide's progress; out at the scene's view, back on its own camera. The glide is driven, not
+-- played: the zoomIn animation is held at the point zoomAt names, so it can stop anywhere between
+-- the scene's view and the head (and run back the same way).
 function CharacterCreate_UpdateZoom(elapsed)
 	local zoom = CHARCREATE_ZOOM;
 	local to = CharacterCreate.zoomTo;
@@ -1036,14 +1068,31 @@ function CharacterCreate_UpdateZoom(elapsed)
 		CharacterCreate:SetCamera(0);
 		CharacterCreate:SetSequence(0);
 		CharacterCreate_ResetZoom();
+		return;
 	end
+	CharacterCreate:SetSequenceTime(zoom.zoomIn, at * zoom.glide * 1000);
+end
+
+-- The mouse wheel moves where the customize view stops, from the head out towards the scene's view
+-- (far enough to see a tail) and back in. Only while customizing.
+-- A tick is a share of the way between them, not of the glide's time: the glide eases in and out
+-- (glue/zoom.py's _ease), so equal times near either end would hardly move the view.
+CHARCREATE_ZOOM_WHEEL_STEP = 0.15;
+function CharacterCreate_OnMouseWheel(self, delta)
+	if ( not CharacterCreate.zoomCamera or (CharacterCreate.zoomTo or 0) == 0 ) then
+		return;
+	end
+	local share = CharCreate_ZoomShare(CharacterCreate.zoomTo) + (delta or 0) * CHARCREATE_ZOOM_WHEEL_STEP;
+	CharacterCreate.zoomManual = true;
+	-- all the way out is the scene's view, still on the zoom's camera (zoomTo 0 would leave it)
+	CharacterCreate.zoomTo = math.max(0.01, CharCreate_ZoomTime(math.max(0, math.min(1, share))));
 end
 
 -- Zoomed in, the head moved (the character settled into Stand, a new model loaded): the glide goes
 -- on, to the camera of where the head is now. Not for a head that only breathes: that would hop
 -- between neighbouring cameras.
 function CharacterCreate_RetargetZoom()
-	if ( CharacterCreate.zoomTo ~= 1 or not CharacterCreate.zoomCamera ) then
+	if ( (CharacterCreate.zoomTo or 0) == 0 or not CharacterCreate.zoomCamera ) then
 		return;
 	end
 	local camera = CharCreate_ZoomCamera();
@@ -1057,6 +1106,7 @@ function CharacterCreate_ResetZoom()
 	CharacterCreate.zoomCamera = nil;
 	CharacterCreate.zoomHead = nil;
 	CharacterCreate.zoomTo = nil;
+	CharacterCreate.zoomManual = nil;
 	CharacterCreate.zoomAt = 0;
 end
 
