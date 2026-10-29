@@ -11,8 +11,9 @@ sub-chunks:
 * Extra ``MOTV``/``MOCV`` layers beyond the two the old renderer binds are
   dropped, and the header flags that advertise them are corrected to match.
 * Shadowlands reused ``MOBA``'s bounding-box bytes for a wide material id, so
-  when that layout is detected the boxes are recomputed from the geometry
-  rather than left as garbage the client would cull against.
+  when that layout is detected the id is moved into the material byte 3.3.5a
+  reads, and the boxes are recomputed from the geometry rather than left as
+  garbage the client would cull against.
 """
 
 from __future__ import annotations
@@ -24,8 +25,11 @@ from collections.abc import Sequence
 from ..chunks import Chunk, ChunkReader, ChunkWriter, report_unknown
 from ..errors import MalformedFileError, UnsupportedFormatError
 from ..limits import (
+    MOBA_FLAG_WIDE_MATERIAL,
     MOBA_SIZE,
     MOGP_HEADER_SIZE,
+    MOPY_NO_MATERIAL,
+    MPY2_NO_MATERIAL,
     WMO_GROUP_CHUNKS_KNOWN,
     WMO_GROUP_FLAG_HAS_BSP,
     WMO_GROUP_FLAG_HAS_DOODADS,
@@ -160,9 +164,11 @@ def _convert_poly(payload: bytes, triangle_count: int, result: FileResult,
     over = 0
     for i in range(triangle_count):
         flags, material = struct.unpack_from("<HH", payload, i * 4)
-        if material > 0xFF:
+        if material == MPY2_NO_MATERIAL:
+            material = MOPY_NO_MATERIAL  # the same "collision only" face, narrower
+        elif material > 0xFF:
             over += 1
-            material = 0xFF  # 0xFF is the client's "collision only" material
+            material = MOPY_NO_MATERIAL
         out[i * 2] = flags & 0xFF
         out[i * 2 + 1] = material & 0xFF
     if over:
@@ -172,6 +178,42 @@ def _convert_poly(payload: bytes, triangle_count: int, result: FileResult,
                      f"collision-only", triangles=over)
     result.lossy("wmo.group.mpy2",
                  f"converted MPY2 to MOPY for {triangle_count} triangles")
+    return bytes(out)
+
+
+def _narrow_batch_materials(moba: bytes, result: FileResult) -> bytes:
+    """Move each batch's wide material id into the byte 3.3.5a reads.
+
+    A batch flagged :data:`MOBA_FLAG_WIDE_MATERIAL` keeps its material as a
+    uint16 inside the bounding box and leaves the old byte at 0.  The bounds
+    rebuild overwrites the box, so without this every batch draws with the
+    first material.
+    """
+    out = bytearray(moba)
+    moved = over = 0
+    for i in range(len(moba) // MOBA_SIZE):
+        base = i * MOBA_SIZE
+        flags = out[base + 22]
+        if not flags & MOBA_FLAG_WIDE_MATERIAL:
+            continue
+        material = struct.unpack_from("<H", out, base + 10)[0]
+        if material > 0xFF:
+            # 3.3.5a indexes its material list with this byte unchecked, so an
+            # out-of-range value must not be written; the first one is safe.
+            over += 1
+            material = 0
+        out[base + 22] = flags & ~MOBA_FLAG_WIDE_MATERIAL & 0xFF
+        out[base + 23] = material
+        moved += 1
+    if moved:
+        result.info("wmo.group.moba_material",
+                    f"moved the material of {moved} render batch(es) into the "
+                    f"byte 3.3.5a reads", batches=moved)
+    if over:
+        result.lossy("wmo.group.moba_material_id",
+                     f"{over} render batch(es) used a material above 255; "
+                     f"3.3.5a stores a batch's material in a byte, so they draw "
+                     f"with the first material", batches=over)
     return bytes(out)
 
 
@@ -329,6 +371,8 @@ def convert_group_parts(data: bytes, source_name: str, opts: Options,
     vertex_count = len(vertices) // 12
 
     batches = by_name.get("MOBA", [b""])[0]
+    if batches and had_wide_materials:
+        batches = _narrow_batch_materials(batches, res)
     if batches and had_wide_materials and vertices and indices:
         narrow = struct.pack("<" + "H" * len(indices),
                              *(min(i, 0xFFFF) for i in indices))

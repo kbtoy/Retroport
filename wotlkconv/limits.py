@@ -181,6 +181,12 @@ MOLT_SIZE = 48
 MFOG_SIZE = 48
 MOGP_HEADER_SIZE = 68
 MOBA_SIZE = 24
+#: Post-Wrath MOBA flag: the batch's material is the uint16 at offset 0x0A,
+#: inside the bounding box, and the material byte at 0x17 is left at 0.
+MOBA_FLAG_WIDE_MATERIAL = 0x02
+#: MPY2's "no material" (a collision-only face); MOPY spells it 0xFF.
+MPY2_NO_MATERIAL = 0xFFFF
+MOPY_NO_MATERIAL = 0xFF
 
 #: MOHD.nTextures is a uint32 but the client indexes MOTX by byte offset.
 WMO_MAX_MATERIALS = 0xFFFF
