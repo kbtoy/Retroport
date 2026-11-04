@@ -336,16 +336,16 @@ Install (`Direct.go`):
    client holds the file. Aliases: a model where the client looks for it (a sub-folder), a model's
    texture beside it (`alias_for` - one look in nine needs one; the Damned Necrolyte skull's lives
    in collections\). A display the client's ItemDisplayInfo.dbc has is reported.
-3. **pack** - `out\patch-T.MPQ` (stored, written as it goes; an alias shares its file's block): a
-   manifest (`retroport\direct.json` - Install replaces only a patch-T that has one), the tables,
-   the path tables (the client's, read with patch-T set aside, plus the new rows), the files, the
+3. **pack** - `out\patch-Q.MPQ` (`retailpack.patch_for`: patch-T for a client without the path-table merge) (stored, written as it goes; an alias shares its file's block): a
+   manifest (`retroport\direct.json` - Install replaces only a patch that has one), the tables,
+   the path tables (the client's, read with this route's own patches set aside, plus the new rows), the files, the
    aliases. Then `check`: every path `retailpack.lookups` says the client opens, looked for in the
    patch and the client.
 4. **sql** - `out\sql\retail-direct-items.sql`: `DELETE ... WHERE (entry, displayid) IN` the pairs
    this route ever wrote (`ids.json` `owned`), then one INSERT in the kit's format (so
    `itemstats.kit_items` reads it) - the label of a non-default look ("Mythic") as its description
    - then `itemstats.updates` for each piece (no item sets: those need ItemSet.dbc rows).
-5. **install** - `Data\patch-T.MPQ` replaced (removed first: hard links), the old one in
+5. **install** - `Data\patch-Q.MPQ` (an earlier own patch-T moved into the backup) replaced (removed first: hard links), the old one in
    `direct\backups\<time>\client\`, the record in `install.json` (the kit's format), Cache cleared.
 
 `out\build.json` records what was built (looks, build, client, steps, entries, a summary); the
@@ -454,3 +454,15 @@ client keeps its own). The record keeps `item_rows` (archive -> size and mtime) 
 `mountpack.item_rows_gone` tells the page when the archive changed since and lost the rows, and the
 direct route's Undo leaves an archive that changed since as it is. Kit route: `Workbench._mounts_installed`
 (after the item sets); direct: `Direct.install`.
+
+## Client check (0.5.0)
+
+`Direct.client_check` writes the installed patch's `.m2` list to `<work>\client-check\models.txt` and runs
+`WowClient64.exe -windowed` with `WXL_RETAIL_MODEL_CHECK=<that folder>`, `WXL_NATIVE_RETAIL_MODELS=1` and
+`WXL_LOG_FLUSH=1` (the client's model check mode, retroport-native `x64_native_model_check.py`): at the login
+screen it reads each model natively and through the converter, writes `check.txt` (`<model>\t<same|DIFFERS|
+other: not read>`) and exits. The client's `Logs\*.log` are copied aside first and put back; new
+`Errors\*Crash.txt` files fail the job. The result goes into `out\build.json` (`summary.client_check`) for the page.
+`Direct.check_shadowed` (after each install) lists the patch's files `ClientData(top=patch).shadowed_by` finds
+in an archive above it; the path tables are left out where `retailpack.merges_path_tables` (the exe holds
+FdidCompat.cpp's log line `MERGE_MARK`).

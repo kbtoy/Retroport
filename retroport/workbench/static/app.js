@@ -905,6 +905,11 @@ function renderKit() {
     const sm = st.summary || {};
     if (sm.files) notes.push(`Last build: ${plural(sm.items || 0, "item")}, ${plural(sm.files, "file")} (${sm.mb} MB)` +
       (sm.unreadable ? `, <span class="warn">${sm.unreadable} unreadable from your install</span>` : "") + ".");
+    const cc = sm.client_check;
+    if (cc) notes.push((cc.failed.length ? `<span class="warn">!</span> ` : `<span class="ok">✓</span> `) +
+      `Checked in the client ${when(cc.time)}: ${cc.same} of ${plural(cc.models, "model")} read as retail has them` +
+      (cc.differs.length ? `, ${cc.differs.length} drawn differently` : "") +
+      (cc.failed.length ? `, <span class="warn">${cc.failed.length} not read</span> (the log names them)` : "") + ".");
   } else if (st.project) {
     if (st.local) notes.push(`<span class="ok">✓</span> Retail ${st.project.build} straight from your local install.`);
     else if (c.local && st.retail_build) notes.push(`<span class="warn">!</span> The kit's project is pinned to retail ${st.project.build}; ` +
@@ -935,6 +940,10 @@ function renderKit() {
   $("#k-go").textContent = running && j.name === "go" ? "Installing…" : st.installed ? "Install again" : "Install";
   $("#k-stop").hidden = !running;
   $("#k-undo").disabled = running || !last;
+  // retail direct: the installed models read by the client itself (its model check mode)
+  $("#k-check").hidden = !direct || !last;
+  $("#k-check").disabled = running;
+  $("#k-check").textContent = running && j.name === "check" ? "Checking…" : "Check in the client";
   $("#k-build").disabled = running || !st.project || !n;
 
   // progress: the job's steps, each ticked as this job passes it (a new install starts them all clear)
@@ -1027,6 +1036,12 @@ function wireKit() {
                 "\nIt builds what changed first (that can take a while), backs up everything it replaces " +
                 "(Undo puts it back) and runs no SQL. Close WoW first."))
       kitRun("go");
+  });
+  $("#k-check").addEventListener("click", () => {
+    if (confirm("Check the last install in the x64 client? WoW opens in its check mode (no login), reads every " +
+                `model ${K.status.patch_name} holds the way play reads them, and closes by itself - about a second ` +
+                "a model. The log lists any it refuses or draws differently. Close WoW first."))
+      kitRun("check");
   });
   $("#k-undo").addEventListener("click", () => {
     const l = K.status.last_install;

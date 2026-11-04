@@ -137,7 +137,8 @@ Settings > *How Install puts items in* > **Retail direct**, Install converts not
    from* > *My own install*) and checks each is the layout the client reads.
 2. It works out every file the basket's looks name - the models for every race and sex, their
    skins and textures, the body textures, the icons - and puts them, the item tables and the
-   client's file-id tables (with the new files added) into `Data\patch-T.MPQ`. Where the client
+   client's file-id tables (with the new files added) into `Data\patch-Q.MPQ` (`patch-T.MPQ` in an
+   x64 client built before 2026-11-03, which reads only the topmost file-id tables). Where the client
    looks for a file somewhere else than retail keeps it (a helm's texture kept with its set's other
    pieces), the patch has it there too; a check then looks up every file the client will open, as
    the client does.
@@ -147,12 +148,21 @@ Settings > *How Install puts items in* > **Retail direct**, Install converts not
    is 4271546. The SQL only replaces rows retail direct made itself: an id your database already
    uses for something else stops it with "Duplicate entry".
 4. It installs the patch (the one it replaces is backed up; Undo puts it back) and clears the
-   client's cache. The server's dbc folder is left alone.
+   client's cache. The server's dbc folder is left alone. It never replaces another tool's patch,
+   moves an earlier install of its own at `patch-T.MPQ` to `patch-Q.MPQ`, and then names any file of
+   the patch that an archive above it hides (a whole table another tool put higher up).
+5. **Check in the client** (after an install) opens the x64 client in its check mode - no login, a
+   window that closes by itself, about a second a model - which reads every model the patch holds
+   the way play reads them, natively, and compares each with its converted form. The page then says
+   how many read as retail has them, how many draw differently and which the client refuses (play
+   converts those on the spot - a short freeze - or leaves them out); the log names each.
 
 There are no measurements, audit or Equip Plus pieces - nothing is converted - and the Stats step
 applies as usual (its item sets are the kit's only). These items show retail's looks only in the
-x64 client: a 32-bit client shows them without a model. Install again after `patch-R.MPQ` is made
-again: the patch carries a copy of the client's file-id tables. Retail direct keeps its own
+x64 client: a 32-bit client shows them without a model. The x64 client reads the file-id tables of
+every archive (2026-11-03), so other packs' new files - the races', the undead's - and this patch's
+all resolve; an older client reads only the topmost copy (install again after `patch-R.MPQ` is made
+again, there). Retail direct keeps its own
 install, history and Undo (in `%USERPROFILE%\.retroport\workbench\direct`), apart from the kit's.
 
 ## Mounts
@@ -167,8 +177,8 @@ with either way in:
 
 - **Backport kit**: each model converted for any 3.3.5a client (its skins, animations and textures
   with it), in a patch of its own, `Data\patch-M.MPQ`.
-- **Retail direct**: retail's own models (the x64 client converts them as it loads them), in the
-  route's `patch-T.MPQ`.
+- **Retail direct**: retail's own models (the x64 client draws them as they are), in the route's
+  patch (`patch-Q.MPQ`).
 
 Either way every model and skin goes under `Creature\Retroport\` - an old horse or drake keeps its
 3.3.5 model for the NPCs that use it - and each mount becomes:

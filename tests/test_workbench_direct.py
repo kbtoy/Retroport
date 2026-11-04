@@ -167,7 +167,7 @@ class FakeRetail:
 def _client(tmp_path):
     root = tmp_path / "WotLK x64"
     (root / "Data" / "enUS").mkdir(parents=True)
-    (root / "WowClient64.exe").write_bytes(b"")
+    (root / "WowClient64.exe").write_bytes(b"MZ" + RP.MERGE_MARK)   # a client that reads every path table
     (root / "Cache" / "WDB").mkdir(parents=True)
     write_archive(str(root / "Data" / "enUS" / "locale-enUS.MPQ"), {})
     items, displays = DBCFile(8), DBCFile(25)
@@ -284,3 +284,91 @@ def test_settings_route_picks_what_install_runs():
     kit.busy = lambda: True
     with pytest.raises(RuntimeError, match="busy"):
         SV.Workbench.run_direct(wb, "go")
+
+
+# -- which patch, and what stands with it (0.5.0) -------------------------------------------------
+def test_the_patch_follows_what_the_client_reads(tmp_path):
+    root = tmp_path / "client"
+    root.mkdir()
+    assert RP.patch_for(str(root)) == RP.PATCH                           # no exe to read: the current one
+    (root / "WowClient64.exe").write_bytes(b"MZ older")
+    assert RP.merges_path_tables(str(root)) is False and RP.patch_for(str(root)) == RP.LEGACY_PATCH
+    (root / "WowClient64.exe").write_bytes(b"MZ newer " + RP.MERGE_MARK + b" (rows)")
+    assert RP.merges_path_tables(str(root)) is True and RP.patch_for(str(root)) == "patch-Q.MPQ"
+
+
+def test_an_earlier_install_at_patch_t_moves_to_patch_q(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    data = os.path.join(d.client, "Data")
+    old = os.path.join(data, RP.LEGACY_PATCH)
+    write_archive(old, {RP.MANIFEST: b"{}", "item\\old.blp": b"BLP2"})
+    assert d.go(BASKET, PLAN)
+    rec = d.last_install()
+    assert not os.path.exists(old) and os.path.isfile(os.path.join(data, RP.PATCH))
+    assert rec["client"] == [RP.LEGACY_PATCH] and rec["added"] == [os.path.join(data, RP.PATCH)]
+    assert any("took out patch-T.MPQ" in line for line in d.lines)
+    assert d.undo() and os.path.isfile(old) and not os.path.exists(os.path.join(data, RP.PATCH))
+
+
+def test_another_tools_patch_t_stays_where_it_is(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    data = os.path.join(d.client, "Data")
+    undead = os.path.join(data, RP.LEGACY_PATCH)                          # the undead pack's
+    write_archive(undead, {"DBFilesClient\\chrcustomizationchoice.db2": b"WDC5theirs"})
+    before = open(undead, "rb").read()
+    assert d.go(BASKET, PLAN)
+    assert open(undead, "rb").read() == before and os.path.isfile(os.path.join(data, RP.PATCH))
+    assert d.last_install()["client"] == []
+    assert any("nothing above patch-Q.MPQ hides its files" in line for line in d.lines)
+
+
+def test_install_names_what_an_archive_above_hides(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    data = os.path.join(d.client, "Data")
+    write_archive(os.path.join(data, "patch-Z.MPQ"), {"DBFilesClient\\item.db2": b"WDC5older",
+                                                     RP.MODEL_PATHS: RP.write_paths({9: "x.m2"})})
+    assert d.go(BASKET, PLAN)
+    hidden = d.check_shadowed(RP.PATCH)
+    assert ("DBFilesClient\\item.db2", "patch-Z.MPQ") in hidden
+    assert all(f != RP.MODEL_PATHS for f, _ in hidden)                    # the client reads every path table
+    assert any("hidden by an archive above it" in line for line in d.lines)
+
+
+def test_check_in_the_client_reads_the_installed_models(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    assert not d.client_check()                                           # nothing installed yet
+    assert d.go(BASKET, PLAN)
+    logs = os.path.join(d.client, "Logs")
+    os.makedirs(logs, exist_ok=True)
+    with open(os.path.join(logs, "WXL-native.log"), "w") as fh:
+        fh.write("the user's own log")
+    seen = {}
+
+    class FakeClient:                                   # the client in its check mode
+        def __init__(self, args, cwd, env):
+            seen["env"], seen["cwd"] = env, cwd
+            work = env["WXL_RETAIL_MODEL_CHECK"]
+            models = open(os.path.join(work, "models.txt"), encoding="latin-1").read().split()
+            with open(os.path.join(work, "check.txt"), "w", encoding="latin-1") as out:
+                for i, m in enumerate(models):
+                    out.write(f"{m}\t" + ("same (NATIVE) loaded in 1.0 ms" if i else "LOAD FAILED: a section past 256 bones") + "\n")
+            with open(os.path.join(logs, "WXL-native.log"), "w") as fh:
+                fh.write("the check's log")
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            pass
+
+    import subprocess
+    monkeypatch.setattr(subprocess, "Popen", FakeClient)
+    assert d.client_check()
+    assert seen["env"]["WXL_NATIVE_RETAIL_MODELS"] == "1" and seen["cwd"] == d.client
+    assert open(os.path.join(logs, "WXL-native.log")).read() == "the user's own log"   # put back
+    cc = d.built_record()["summary"]["client_check"]
+    assert cc["failed"] and cc["same"] == cc["models"] - 1
+    assert any("not read" in line for line in d.lines) and any("LOAD FAILED" in line for line in d.lines)

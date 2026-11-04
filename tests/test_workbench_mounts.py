@@ -303,7 +303,7 @@ LISTFILE = {234564: "creature/drakemount/drakemount.m2", 234570: "creature/drake
 def _client(tmp_path, above: dict | None = None):
     root = tmp_path / "client"
     (root / "Data" / "enUS").mkdir(parents=True)
-    (root / "WowClient64.exe").write_bytes(b"")
+    (root / "WowClient64.exe").write_bytes(b"MZ" + RP.MERGE_MARK)   # a client that reads every path table
     write_archive(str(root / "Data" / "enUS" / "locale-enUS.MPQ"), {})
     items, terrains = DBCFile(8), DBCFile(1)
     items.add_record([MT.ITEM_BASE] + [0] * 7)

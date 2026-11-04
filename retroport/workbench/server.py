@@ -679,7 +679,7 @@ class Workbench:
         st["mounts"] = len(MT.basket_mounts(items))
         last = st.get("last_install") or {}
         if last.get("mounts") and last.get("data"):
-            patch = DR.RP.PATCH if self.runner() is self.direct else MP.KIT_PATCH
+            patch = self.direct.patch_name if self.runner() is self.direct else MP.KIT_PATCH
             changed = MP.stale(last["data"], patch)
             if changed:
                 st["mount_stale"] = changed
@@ -1010,7 +1010,7 @@ class Workbench:
         k.start(action if action != "rerun" else f"rerun {step}", fn, *args)
 
     def run_direct(self, action: str) -> None:
-        """Retail direct's jobs: go (build and install), build, undo, stop."""
+        """Retail direct's jobs: go (build and install), build, undo, check (in the client), stop."""
         d = self.direct
         if action == "stop":
             return d.stop()
@@ -1036,6 +1036,8 @@ class Workbench:
             return d.start("go", go)
         if action == "undo":
             return d.start("undo", d.undo)
+        if action == "check":                        # the installed models, read by the client itself
+            return d.start("check", d.client_check)
         raise ValueError(f"retail direct has no {action!r} - it builds everything in one go")
 
     # -- settings (the page's Settings view) ---------------------------------------
@@ -1097,7 +1099,7 @@ class Workbench:
                 "Equip Plus isn't in your client - Install leaves its 3D pieces out")
         if st.route == "direct":
             why = self.direct.problems()
-            put("route", not why, why[0] if why else "Retail's own items go into the x64 client's " + DR.RP.PATCH)
+            put("route", not why, why[0] if why else "Retail's own items go into the x64 client's " + self.direct.patch_name)
         return out
 
     def apply_settings(self, v: dict) -> None:

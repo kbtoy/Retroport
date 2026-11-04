@@ -35,8 +35,17 @@ TABLES = {
     "componentmodelfiledata": 0xAD90D87A, "componenttexturefiledata": 0xB32B030A,
     "helmetgeosetdata": 0x103B3B37, "helmetanimscaling": 0xFF7E3A8A,
 }
-PATCH = "patch-T.MPQ"                       # above patch-R (its path tables) and patch-S, under the kit's
+# The patch retail direct installs (``patch_for``): patch-Q for a client that reads every archive's
+# path tables (FdidCompat.cpp, 2026-11-03) - over patch-H's spell tables, under patch-R and the undead
+# pack's patch-T, a letter no other tool takes; patch-T, as before, for an older client, which reads
+# only the top copy of the path tables and so needs this patch above patch-R. In the Retail and Next
+# folders patch-T became the undead pack's, and retail direct refused to install there.
+PATCH = "patch-Q.MPQ"
+LEGACY_PATCH = "patch-T.MPQ"
+OWN_PATCHES = (PATCH, LEGACY_PATCH)        # where an install of this route may stand (its manifest says so)
 MANIFEST = "retroport\\direct.json"         # in the patch: what made it (an install only replaces its own)
+# FdidCompat.cpp's log line, in a client that reads the path tables under the top copy
+MERGE_MARK = b"more copies under them"
 MODEL_PATHS = "DBFilesClient\\ModelFilePath.db2"
 TEXTURE_PATHS = "DBFilesClient\\TextureFilePath.db2"
 EXTENSION = {"model": ".m2", "skin": ".skin", "anim": ".anim", "bone": ".bone", "skel": ".skel",
@@ -47,6 +56,32 @@ VARIANT = 1_000_000                         # an item's other looks: (modifier +
 SPARE = 16_000_000                          # past those: numbered from here (item_template's entry is 24-bit)
 ENTRY_MAX = 16_777_215
 MPQ_LIMIT = 3_900_000_000                   # MPQ v1's offsets are 32-bit
+
+
+_MERGES: dict[tuple, bool] = {}
+
+
+def merges_path_tables(client_dir: str) -> bool | None:
+    """Whether the client's WowClient64.exe reads every archive's path tables (``MERGE_MARK`` in it);
+    None without an exe to read. Kept per exe (path, size, time)."""
+    exe = os.path.join(client_dir or "", "WowClient64.exe")
+    try:
+        st = os.stat(exe)
+    except OSError:
+        return None
+    key = (os.path.normcase(exe), st.st_size, st.st_mtime_ns)
+    if key not in _MERGES:
+        try:
+            with open(exe, "rb") as fh:
+                _MERGES[key] = MERGE_MARK in fh.read()
+        except OSError:
+            return None
+    return _MERGES[key]
+
+
+def patch_for(client_dir: str) -> str:
+    """The patch retail direct installs in this client (see ``PATCH``)."""
+    return LEGACY_PATCH if merges_path_tables(client_dir) is False else PATCH
 
 
 # -- the client's rules (RetailItemIndex.cpp) ---------------------------------------------------

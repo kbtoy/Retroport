@@ -8,7 +8,7 @@ Both install routes call ``build``; they differ in the files only:
   install and taken out by its Undo (``place``);
 * ``"direct"`` (the x64 client): retail's own files, which the client converts as it loads them - a
   model finds its skins, animations and skeleton by name beside it and its textures by FileDataID,
-  so ``paths`` holds the path-table rows; ``direct`` adds them all to its ``patch-T.MPQ``.
+  so ``paths`` holds the path-table rows; ``direct`` adds them all to its patch (``retailpack.patch_for``).
 
 Every model and skin goes under ``creature\\retroport\\`` (``mounts.relocate``): a retail model
 that kept an old model's path (the riding horse) never replaces the stock one NPCs use. Sounds keep

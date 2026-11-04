@@ -4,7 +4,8 @@ The backport kit (``kit``) turns each look into 3.3.5 files any 3.3.5a client dr
 (``WowClient64.exe``) draws retail's items itself, from retail's own tables and files, so this route
 hands it those as they are:
 
-* ``Data\\patch-T.MPQ`` - retail's item tables (``retailpack.TABLES``, whole: the client reads any
+* ``Data\\patch-Q.MPQ`` (``retailpack.patch_for``; patch-T in a client older than 2026-11-03, which
+  reads only the top copy of the path tables) - retail's item tables (``retailpack.TABLES``, whole: the client reads any
   display from them), every file the looks name at retail's paths (models for every race and sex,
   their skins and textures, body layers, icons), a copy of a model's texture where the client looks
   for it (``retailpack.alias_for``), and the FileDataID path tables: the client's own (patch-R's)
@@ -55,6 +56,21 @@ DB2_NAMES = {"ItemDisplayInfo": "itemdisplayinfo", "ModelFileData": "modelfileda
              "ItemModifiedAppearance": "itemmodifiedappearance", "ItemAppearance": "itemappearance"}
 
 
+def _made_here(path: str) -> bool:
+    """Whether the archive at ``path`` is one retail direct made (its manifest)."""
+    from ..mpq import MPQ
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        m = MPQ(path)
+        try:
+            return m.has(RP.MANIFEST)
+        finally:
+            m.close()
+    except Exception:
+        return False
+
+
 @dataclass
 class DirectSettings:
     """What the page reads of a route's settings."""
@@ -97,6 +113,22 @@ class Direct:
         self._lock = threading.Lock()
 
     # -- state ------------------------------------------------------------------
+    @property
+    def patch_name(self) -> str:
+        """The patch this route installs in the client (``retailpack.patch_for``)."""
+        return RP.patch_for(self.client)
+
+    def own_patches(self) -> set[str]:
+        """The client's archives this route made (lower case): its patch, and an earlier install's at
+        the other letter (its manifest says whose) - the client as a build finds it leaves them out."""
+        out = {self.patch_name.lower()}
+        data = self.cfg.client_data
+        for name in RP.OWN_PATCHES:
+            path = os.path.join(data, name) if data else ""
+            if name.lower() not in out and path and _made_here(path):
+                out.add(name.lower())
+        return out
+
     @property
     def cfg(self) -> DirectSettings:
         return DirectSettings(self.work, os.path.join(self.client, "Data") if self.client else "")
@@ -148,7 +180,7 @@ class Direct:
             all(x["ok"] for x in steps)
         return {"route": "direct", "settings": asdict(self.cfg), "problems": self.problems(),
                 "project": {"build": self.retail_build()}, "retail_build": self.retail_build(), "local": True,
-                "patch_name": RP.PATCH, "steps": steps, "job": asdict(self.job) if self.job else None, "sheets": "",
+                "patch_name": self.patch_name, "steps": steps, "job": asdict(self.job) if self.job else None, "sheets": "",
                 "sql": self.sql_files(), "last_install": last, "next_line": self.first + len(self.lines),
                 "selected": None, "equip_plus": {"installed": True, "wanted": True}, "built": built,
                 "installed": bool(built and last and last.get("time", "") >= b.get("time", "") and
@@ -246,7 +278,7 @@ class Direct:
         mounts_sql = self.mounts(rides, files) if rides else ""
         passed("mounts")
         self._step("pack")
-        patch = os.path.join(self.work, "out", RP.PATCH)
+        patch = os.path.join(self.work, "out", self.patch_name)
         self.pack(patch, tables, files, pieces, record)
         passed("pack")
         self._step("sql")
@@ -267,7 +299,7 @@ class Direct:
         if cat is None:
             raise ValueError("retail's mounts are still loading - try again in a minute")
         self.say(f"Making {len(rides)} mount(s) from retail's own files")
-        built = MP.build(rides, cat, self.source, self.client, "direct", RP.PATCH, self.data_dir, self.listfile,
+        built = MP.build(rides, cat, self.source, self.client, "direct", self.patch_name, self.data_dir, self.listfile,
                          self.say, self._step)
         for fdid, (kind, path) in built.paths.items():
             files.kinds.setdefault(fdid, kind)
@@ -341,7 +373,7 @@ class Direct:
         cd = ClientData(self.client)
         try:
             # the client as this patch finds it: everything but the patch itself
-            cd.sources = [(label, s) for label, s in cd.sources if label.lower() != RP.PATCH.lower()]
+            cd.sources = [(label, s) for label, s in cd.sources if label.lower() not in self.own_patches()]
             taken = {r[0] for r in DBCFile.from_bytes(cd.read("DBFilesClient\\Item.dbc")).records}
             dbc_displays = {r[0] for r in DBCFile.from_bytes(cd.read("DBFilesClient\\ItemDisplayInfo.dbc")).records}
             base = {}
@@ -506,7 +538,7 @@ class Direct:
         cd = ClientData(self.client)
         bad = []
         try:
-            cd.sources = [(label, s) for label, s in cd.sources if label.lower() != RP.PATCH.lower()]
+            cd.sources = [(label, s) for label, s in cd.sources if label.lower() not in self.own_patches()]
             for d in files.displays or []:
                 for what, path in RP.lookups(files.graph, d, files.paths):
                     if not path or (path.lower() not in held and not cd.exists(path)):
@@ -562,18 +594,15 @@ class Direct:
         if K.wow_running():
             self.say("!! close World of Warcraft first")
             return False
-        from ..mpq import MPQ
         data = self.cfg.client_data
-        dest = os.path.join(data, RP.PATCH)
-        if os.path.isfile(dest):
-            m = MPQ(dest)
-            try:
-                ours = m.has(RP.MANIFEST)
-            finally:
-                m.close()
-            if not ours:
-                self.say(f"!! {dest} is another tool's patch - retail direct won't replace it")
-                return False
+        name = self.patch_name
+        dest = os.path.join(data, name)
+        if os.path.isfile(dest) and not _made_here(dest):
+            self.say(f"!! {dest} is another tool's patch - retail direct won't replace it")
+            return False
+        # an earlier install of this route at the other letter (patch-T, before the client read every
+        # archive's path tables): taken out, kept in the backup (Undo puts it back)
+        earlier = [n for n in RP.OWN_PATCHES if n.lower() != name.lower() and _made_here(os.path.join(data, n))]
         stamp = base = time.strftime("%Y%m%d-%H%M%S")
         n = 2
         while os.path.exists(os.path.join(self.work, "backups", stamp)):     # two installs in one second
@@ -583,18 +612,24 @@ class Direct:
         record = {"time": stamp, "client": [], "server": [], "added": [], "by": "retroport workbench (retail direct)",
                   "basket": items, "data": data, "sql": sql, "mounts": mounts or []}
         self.say(f"Backing up and installing (backup: {backup})")
+        for n in earlier:
+            shutil.copy2(os.path.join(data, n), os.path.join(backup, "client", n))
+            record["client"].append(n)
+            os.remove(os.path.join(data, n))
+            self.say(f"   took out {n} (this route's, from before) - its items are in {name} now")
         if os.path.exists(dest):
-            shutil.copy2(dest, os.path.join(backup, "client", RP.PATCH))
-            record["client"].append(RP.PATCH)
+            shutil.copy2(dest, os.path.join(backup, "client", name))
+            record["client"].append(name)
             os.remove(dest)                          # never write through a hard link into another client
         else:
             record["added"].append(dest)
         shutil.copy2(patch, dest)
-        self.say(f"   installed {RP.PATCH}")
+        self.say(f"   installed {name}")
+        self.check_shadowed(name)
         built = self.mount_built
         if built is not None and mounts:
             try:                                     # the mount items' bag icons: in the item kit's patch, say
-                MP.place_item_rows(self.client, RP.PATCH, built.rides, built.item_ids, backup, record, self.say)
+                MP.place_item_rows(self.client, name, built.rides, built.item_ids, backup, record, self.say)
             except Exception as e:                   # the record is still saved: Undo works
                 self.say(f"!! the mount items' icons: {type(e).__name__}: {e}")
         cache = os.path.join(os.path.dirname(data.rstrip("\\/")), "Cache")
@@ -607,6 +642,145 @@ class Direct:
         for p in self.sql_files():
             self.say(f"   {p}")
         return True
+
+    def client_check(self) -> bool:
+        """The installed patch's models as the x64 client reads them in play, natively: the client run
+        in its model check mode (WXL_RETAIL_MODEL_CHECK, retroport-native's x64_native_model_check.py) on
+        the patch's .m2 files - a window opens and closes by itself, about a second a model. Each model
+        is read by the native loader and by the converter and the two compared: "same" or "DIFFERS"
+        (it draws, but not as retail has it) or not read at all (the client refuses it: play converts
+        it on the spot - a freeze of a few hundred ms - or leaves it out). The client's logs are put
+        back as they were; the result goes in the build record and the log."""
+        rec = self.last_install()
+        if not rec:
+            self.say("!! Install first: the check reads the models your client has")
+            return False
+        if K.wow_running():
+            self.say("!! close World of Warcraft first")
+            return False
+        from ..mpq import MPQ
+        data = rec.get("data") or self.cfg.client_data
+        name = self.patch_name
+        patch = os.path.join(data, name)
+        if not os.path.isfile(patch):
+            self.say(f"!! {patch} isn't there - Install first")
+            return False
+        m = MPQ(patch)
+        try:
+            listed = (m.read("(listfile)") or b"").decode("latin-1").splitlines()
+        finally:
+            m.close()
+        models = sorted({f.strip() for f in listed if f.strip().lower().endswith(".m2")}, key=str.lower)
+        if not models:
+            self.say(f"   {name} holds no models to check")
+            return True
+        client = os.path.dirname(data.rstrip("\\/"))
+        work = os.path.join(self.work, "client-check")
+        shutil.rmtree(work, ignore_errors=True)
+        os.makedirs(work)
+        with open(os.path.join(work, "models.txt"), "w", encoding="latin-1", newline="\r\n") as fh:
+            fh.write("\n".join(models) + "\n")
+        logs = os.path.join(client, "Logs")
+        kept = os.path.join(work, "logs-before")
+        os.makedirs(kept)
+        for n in os.listdir(logs) if os.path.isdir(logs) else []:
+            if n.lower().endswith(".log"):
+                shutil.copy2(os.path.join(logs, n), kept)
+        errors = os.path.join(client, "Errors")
+        crashes = len([n for n in os.listdir(errors) if n.endswith("Crash.txt")]) if os.path.isdir(errors) else 0
+        env = {k: v for k, v in os.environ.items() if k not in ("WXL_PRECONVERT", "WXL_PRECONVERT_CHECK")}
+        env.update({"WXL_RETAIL_MODEL_CHECK": work, "WXL_LOG_FLUSH": "1", "WXL_NATIVE_RETAIL_MODELS": "1"})
+        timeout = 60 + 3 * len(models)
+        self.say(f"Checking {len(models)} model(s) of {name} in the client (a window opens and closes by itself; "
+                 f"up to {timeout // 60 + 1} min)")
+        started = time.time()
+        import subprocess
+        proc = subprocess.Popen([os.path.join(client, "WowClient64.exe"), "-windowed"], cwd=client, env=env)
+        try:
+            while proc.poll() is None:
+                if self.job and self.job.state == "stopped":
+                    proc.kill()
+                    raise Stopped()
+                if time.time() - started > timeout:
+                    proc.kill()
+                    break
+                time.sleep(0.5)
+            proc.wait()
+        finally:
+            for n in os.listdir(kept):
+                shutil.copy2(os.path.join(kept, n), logs)
+            shutil.rmtree(kept, ignore_errors=True)
+        after = len([n for n in os.listdir(errors) if n.endswith("Crash.txt")]) if os.path.isdir(errors) else 0
+        report = os.path.join(work, "check.txt")
+        if not os.path.isfile(report):
+            self.say(f"!! the client wrote no check ({time.time() - started:.0f} s" +
+                     (f", {after - crashes} new crash report(s) in {errors}" if after > crashes else "") +
+                     ") - an older client has no check mode")
+            return False
+        results = []
+        with open(report, encoding="latin-1") as fh:
+            for line in fh:
+                key, _tab, result = line.rstrip("\r\n").partition("\t")
+                if key:
+                    results.append((key, result))
+        same = [k for k, r in results if r.startswith("same")]
+        differs = [(k, r) for k, r in results if r.startswith("DIFFERS")]
+        failed = [(k, r) for k, r in results if not r.startswith(("same", "DIFFERS"))]
+        self.say(f"   {len(same)} of {len(results)} read natively as retail has them, {len(differs)} differ, "
+                 f"{len(failed)} not read ({time.time() - started:.0f} s)" +
+                 (f"; {after - crashes} new crash report(s) in {errors}" if after > crashes else ""))
+        for k, r in failed[:12]:
+            self.say(f"!    {k}: {r}")
+        for k, r in differs[:6]:
+            self.say(f"     {k}: {r}")
+        b = self.built_record()
+        if b:
+            b.setdefault("summary", {})["client_check"] = {
+                "time": time.strftime("%Y%m%d-%H%M%S"), "models": len(results), "same": len(same),
+                "differs": [k for k, _ in differs], "failed": [k for k, _ in failed]}
+            K._save_json(os.path.join(self.work, "out", "build.json"), b)
+        return after == crashes                      # what it found is in the notes; a crash fails the job
+
+    def check_shadowed(self, name: str) -> list[tuple[str, str]]:
+        """The files of the installed patch the client takes from an archive above it instead (each
+        such archive named once, with a few of its files) - a whole table another tool put higher
+        up hides this patch's rows. The path tables count only for a client that reads the top copy
+        alone; one that reads them all (``retailpack.merges_path_tables``) finds this patch's too."""
+        from ..mpq import ClientData, MPQ
+        data = self.cfg.client_data
+        merges = RP.merges_path_tables(self.client) is not False
+        skip = {RP.MODEL_PATHS.lower(), RP.TEXTURE_PATHS.lower(), RP.MANIFEST.lower()} if merges else {RP.MANIFEST.lower()}
+        try:
+            m = MPQ(os.path.join(data, name))
+            try:
+                listed = (m.read("(listfile)") or b"").decode("latin-1").splitlines()
+            finally:
+                m.close()
+            cd = ClientData(self.client, top=name)
+        except Exception as e:
+            self.say(f"!  couldn't check what stands above {name}: {type(e).__name__}: {e}")
+            return []
+        hidden = []
+        try:
+            for f in listed:
+                f = f.strip()
+                if not f or f.lower() in skip or f.startswith("("):
+                    continue
+                by = cd.shadowed_by(f)
+                if by:
+                    hidden.append((f, by))
+        finally:
+            cd.close()
+        if hidden:
+            by_archive: dict[str, list[str]] = {}
+            for f, by in hidden:
+                by_archive.setdefault(by, []).append(f)
+            self.say(f"!  {len(hidden)} file(s) of {name} are hidden by an archive above it - the client reads theirs:")
+            for by, fs in by_archive.items():
+                self.say(f"     {by}: " + ", ".join(fs[:4]) + (f" and {len(fs) - 4} more" if len(fs) > 4 else ""))
+        else:
+            self.say(f"   checked: nothing above {name} hides its files")
+        return hidden
 
     def undo(self) -> bool:
         rec = self.last_install()
