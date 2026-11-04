@@ -847,6 +847,33 @@ def race_identity_cmd(
     console.print(f"  install steps: {os.path.join(out, 'INSTALL.txt')}")
 
 
+@app.command(name="passives")
+def passives_cmd(
+    retail: str = typer.Option(..., "--retail", help="A local retail install, e.g. I:\\World of Warcraft."),
+    client: str = typer.Option(..., "--client", help="A client folder that plays (read only; its DBCs are the base)."),
+    out: str = typer.Option(..., "--out", help="Output folder (client\\, server\\, package.json)."),
+    listfile: str = typer.Option(..., "--listfile", help="Community listfile.csv."),
+    dbd: str = typer.Option(..., "--dbd", help="WoWDBDefs 'definitions' folder."),
+    server_dbc: str = typer.Option(..., "--server-dbc", help="The server's DBC folder (read only)."),
+    patch: str = typer.Option("patch-H.MPQ", "--patch", help="The patch the package installs into."),
+) -> None:
+    """Retail's six new passives for the stock races (Undead, Blood Elf, Dwarf, Tauren, Gnome, Night Elf),
+    beside every 3.3.5 racial they have."""
+    from .race.passives import build_passives
+
+    try:
+        r = build_passives(install_dir=retail, client_dir=client, out_dir=out, listfile=listfile, dbd_dir=dbd,
+                           server_dbc_dir=server_dbc, patch=patch,
+                           on_log=lambda m: console.print(m, markup=False, highlight=False))
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=2)
+    for side, rows in r.rows.items():
+        console.print(f"  {side} rows: {rows}", highlight=False)
+    for w in r.warnings:
+        console.print(f"  [yellow]warn[/] {w}", highlight=False)
+
+
 @app.command(name="glue")
 def glue_cmd(
     bfa: str = typer.Option(..., "--bfa", help="A local BfA (8.x) install."),

@@ -100,6 +100,8 @@ class Effect:
     b: int = 0
     radius: float = 0.0
     period: int = 0                     # EffectAuraPeriod (ms)
+    trigger: int = 0                    # EffectTriggerSpell (a proc aura's spell)
+    amplitude: float = 0.0              # EffectAmplitude: a leech's heal per damage (1.0: as much)
 
 
 @dataclass
@@ -240,6 +242,8 @@ def _set_effects(L: DbcLayout, row: list[int], effects: tuple[Effect, ...], radi
             L.set(row, "EffectAura", e.aura, j)
         L.set(row, "EffectAuraPeriod", e.period, j)
         L.set(row, "EffectMiscValue", _u(e.misc), j)
+        L.set(row, "EffectTriggerSpell", e.trigger, j)
+        L.set(row, "EffectAmplitude", _f(e.amplitude), j)
 
 
 def _set_fields(L: DbcLayout, row: list[int], o: Override, index_tables: dict, food: list[int] | None) -> None:

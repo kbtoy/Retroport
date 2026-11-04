@@ -46,3 +46,12 @@ plus Shadow Resistance; a third would have to be invented rather than ported, so
 - They live on the server, so they apply on every client. Their tooltips and spellbook entries need
   the client patch in each client that plays: the two x64 clients, and the main client only if you
   say so.
+
+**Built (2026-11-03):** `retroport passives` (retroport/race/passives.py) builds the six on a client
+that plays (packages `retroport-output\StockPassives-Retail` and `StockPassives-Next`, installed into
+both x64 clients' patch-H and the server's DBCs). Touch of the Grave and Might of the Mountain take ids
+240001 and 240002 (retail reused 3.3.5's 5227 Underwater Breathing and 59224 Mace Specialization);
+the other four keep retail's. Touch of the Grave: 20% chance, 15 sec cooldown (spell_proc), damage
+0.3125 x attack power + 0.25 x spell power (AzerothCore adds both). Might of the Mountain and Brawn:
+2% (aura 163 on the whole critical hit, aura 50 on critical heals). Touch of Elune: the module puts on
+the day (6:00-18:00 server time) or night spell every 10 sec. The main client has no rows for them.

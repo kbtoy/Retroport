@@ -47,11 +47,18 @@
  * Quiet Contemplation (461063): seated, health a % of the maximum a second - 3.3.5's aura heals a
  *   flat amount, made the % here; mana is 3.3.5's own % aura.
  * Azerite Surge, Titan-Wrought Frame and Hyper Productive are plain spells.
+ *
+ * Stock races, retail's new passives (`retroport passives`): Night Elf - Touch of Elune (154748, dummy
+ * aura): its day spell (154796, +1% critical strike) from 6:00 to 18:00 server time - the time the
+ * client's sky follows - and its night spell (154797, +1% haste) the rest, checked every 10 sec. The
+ * other five (Touch of the Grave's proc and drain, Arcane Acuity, Might of the Mountain, Brawn,
+ * Nimble Fingers) are plain spells and the package's SQL.
  */
 
 #include <cmath>
 #include "DatabaseEnv.h"
 #include "DataMap.h"
+#include "GameTime.h"
 #include "Item.h"
 #include "Player.h"
 #include "ScriptMgr.h"
@@ -60,6 +67,7 @@
 #include "SpellMgr.h"
 #include "SpellScript.h"
 #include "SpellScriptLoader.h"
+#include "Timer.h"
 #include "Unit.h"
 
 enum RetroportRacialSpells
@@ -84,6 +92,9 @@ enum RetroportRacialSpells
     SPELL_EA_FED_HIT           = 233914,
     SPELL_EA_FED_ATTACK_POWER  = 233915,
     SPELL_EA_FED_SPELL_POWER   = 233916,
+    SPELL_NE_TOUCH_OF_ELUNE    = 154748,
+    SPELL_NE_ELUNE_DAY         = 154796,                    // critical strike
+    SPELL_NE_ELUNE_NIGHT       = 154797,                    // haste
 };
 
 constexpr uint32 RETROPORT_EARTHEN_FED[] = { SPELL_EA_FED_CRIT, SPELL_EA_FED_HASTE, SPELL_EA_FED_STAMINA,
@@ -104,6 +115,12 @@ struct RetroportRest : public DataMap::Base
     float last = 0.0f;                                      // the rest bonus the last update left
 };
 
+struct RetroportElune : public DataMap::Base
+{
+    uint32 sinceCheck = 0;                                  // ms since Touch of Elune was last checked
+};
+
+constexpr char const* RETROPORT_ELUNE = "retroport_elune";
 constexpr char const* RETROPORT_LANDING = "retroport_landing";
 constexpr char const* RETROPORT_REST = "retroport_rest";
 
@@ -466,6 +483,46 @@ public:
     }
 };
 
+// Touch of Elune (Night Elf): the day spell by day, the night spell by night (server time); neither
+// without the passive
+static void RetroportUpdateElune(Player* player)
+{
+    if (!player->HasAura(SPELL_NE_TOUCH_OF_ELUNE))
+    {
+        player->RemoveAurasDueToSpell(SPELL_NE_ELUNE_DAY);
+        player->RemoveAurasDueToSpell(SPELL_NE_ELUNE_NIGHT);
+        return;
+    }
+    std::tm local = Acore::Time::TimeBreakdown(GameTime::GetGameTime().count());
+    bool day = local.tm_hour >= 6 && local.tm_hour < 18;
+    uint32 want = day ? SPELL_NE_ELUNE_DAY : SPELL_NE_ELUNE_NIGHT;
+    player->RemoveAurasDueToSpell(day ? SPELL_NE_ELUNE_NIGHT : SPELL_NE_ELUNE_DAY);
+    if (!player->HasAura(want))
+        player->CastSpell(player, want, true);
+}
+
+class retroport_racials_elune_script : public PlayerScript
+{
+public:
+    retroport_racials_elune_script() : PlayerScript("retroport_racials_elune_script",
+        { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_UPDATE }) { }
+
+    void OnPlayerLogin(Player* player) override
+    {
+        RetroportUpdateElune(player);
+    }
+
+    void OnPlayerUpdate(Player* player, uint32 diff) override
+    {
+        RetroportElune* elune = player->CustomData.GetDefault<RetroportElune>(RETROPORT_ELUNE);
+        elune->sinceCheck += diff;
+        if (elune->sinceCheck < 10 * IN_MILLISECONDS)
+            return;
+        elune->sinceCheck = 0;
+        RetroportUpdateElune(player);
+    }
+};
+
 // clears Bouncy's landing mark once the packet is handled
 class retroport_racials_movement_script : public MovementHandlerScript
 {
@@ -491,5 +548,6 @@ void AddRetroportRacialsScripts()
     new retroport_racials_unit_script();
     new retroport_racials_player_script();
     new retroport_racials_earthen_script();
+    new retroport_racials_elune_script();
     new retroport_racials_movement_script();
 }
