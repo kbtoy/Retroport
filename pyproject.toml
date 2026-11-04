@@ -1,6 +1,6 @@
 [project]
 name = "retroport"
-version = "0.5.0"
+version = "0.5.1"
 description = "Retroport Workbench: browse retail WoW items and sets in 3D and backport them to a 3.3.5a client."
 requires-python = ">=3.10"
 license = { text = "MIT" }
