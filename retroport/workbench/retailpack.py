@@ -187,6 +187,8 @@ class Graph:
     texture_files: dict[int, list[int]] = field(default_factory=dict)    # MaterialResourcesID -> FileDataIDs
     layers: dict[int, list[int]] = field(default_factory=dict)           # display -> MaterialResourcesIDs (body layers)
     model_materials: dict[int, list[int]] = field(default_factory=dict)  # display -> MaterialResourcesIDs (per model)
+    # display -> (ModelIndex, TextureType, MaterialResourcesID) of each per-model material
+    model_types: dict[int, list[tuple[int, int, int]]] = field(default_factory=dict)
 
     @classmethod
     def from_rows(cls, displays, model_files, texture_files, material_res, model_mat_res) -> "Graph":
@@ -200,16 +202,44 @@ class Graph:
         for i, r in texture_files:
             if r.get("MaterialResourcesID"):
                 textures[r["MaterialResourcesID"]].append(r.get("FileDataID") or i)
-        layers, per_model = defaultdict(list), defaultdict(list)
+        layers, per_model, typed = defaultdict(list), defaultdict(list), defaultdict(list)
         for _i, r in material_res:
             if r.get("MaterialResourcesID"):
                 layers[r["ItemDisplayInfoID"]].append(r["MaterialResourcesID"])
         for _i, r in model_mat_res:
             if r.get("MaterialResourcesID"):
                 per_model[r["ItemDisplayInfoID"]].append(r["MaterialResourcesID"])
+                typed[r["ItemDisplayInfoID"]].append((r.get("ModelIndex", -1), r.get("TextureType", 0),
+                                                      r["MaterialResourcesID"]))
         g.model_files, g.texture_files = dict(models), dict(textures)
-        g.layers, g.model_materials = dict(layers), dict(per_model)
+        g.layers, g.model_materials, g.model_types = dict(layers), dict(per_model), dict(typed)
         return g
+
+    def worn(self, display: int) -> list[tuple[int, dict[int, int]]]:
+        """Each model of a display (every race and sex) with the textures it wears by type, as the
+        client's equipment code gives them: 2 its column's ModelMaterialResourcesID, and the
+        TextureType of each ItemDisplayInfoModelMatRes row for its column (a row naming neither
+        column, for both) - retail's armour and weapons fill types 3, 4 and 24 this way, which a model
+        drawn without them shows white. The first file of each material."""
+        row = self.displays.get(display)
+        if row is None:
+            return []
+        mres = list(row.get("ModelResourcesID") or [])
+        tres = list(row.get("ModelMaterialResourcesID") or [])
+        out = []
+        for col in range(2):
+            m = mres[col] if col < len(mres) else 0
+            t = tres[col] if col < len(tres) else 0
+            wears: dict[int, int] = {}
+            own = self.texture_files.get(t, []) if t else []
+            if own:
+                wears[2] = own[0]
+            for index, ttype, res in self.model_types.get(display, []):
+                files = self.texture_files.get(res, [])
+                if files and 0 < ttype < 32 and (index == col or index not in (0, 1)):
+                    wears.setdefault(ttype, files[0])
+            out += [(f, wears) for f in (self.model_files.get(m, []) if m else [])]
+        return out
 
     def files(self, display: int) -> tuple[list[int], list[int], list[tuple[int, int]]]:
         """A display's (models, textures, own-texture pairs): each model of its two columns (every

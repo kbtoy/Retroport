@@ -280,6 +280,7 @@ class Direct:
         self._step("pack")
         patch = os.path.join(self.work, "out", self.patch_name)
         self.pack(patch, tables, files, pieces, record)
+        self.write_view_list(files)
         passed("pack")
         self._step("sql")
         sql = self.write_sql(pieces)
@@ -750,6 +751,38 @@ class Direct:
                 "differs": [k for k, _ in differs], "failed": [k for k, _ in failed]}
             K._save_json(os.path.join(self.work, "out", "build.json"), b)
         return after == crashes                      # what it found is in the notes; a crash fails the job
+
+    def write_view_list(self, files: Files) -> str:
+        """``out\\view-models.txt``: each model of the build where the client looks for it, with the
+        textures it wears - an item model its own (type 2) and its per-model materials' types (3, 4,
+        24 ...: ``Graph.worn``), a mount its three skins (11-13) - as the client's login-screen model
+        viewer reads its list (retroport-native tools\\x64_model_view.py --list): the patch's look
+        checked without logging in."""
+        lines, seen = [], set()
+        g = files.graph
+        for d in files.displays or []:
+            if g is None:
+                break
+            for model, wears in g.worn(d):
+                mp = files.paths.get(model, "")
+                look = RP.model_look(mp) if mp.endswith(".m2") else ""
+                textures = ";".join(f"{t}={files.paths[f]}" for t, f in sorted(wears.items()) if files.paths.get(f))
+                if look and textures and look not in seen:
+                    seen.add(look)
+                    lines.append(f"{look}\t-35\t-1\t{textures}")
+        for r in files.rides or []:
+            model = r.model_path[:-4] + ".m2" if r.model_path.lower().endswith(".mdx") else r.model_path
+            if model in seen:
+                continue
+            seen.add(model)
+            folder = model.rsplit("\\", 1)[0]
+            names = MT.texture_names(model, r.retail.get("textures") or {})[0]
+            skins = ";".join(f"{11 + i}={folder}\\{n}.blp" for i, n in enumerate(names) if n)
+            lines.append(f"{model}\t-35\t-1\t{skins}")
+        path = os.path.join(self.work, "out", "view-models.txt")
+        with open(path, "w", encoding="utf-8", newline="\r\n") as fh:
+            fh.write("\n".join(lines) + ("\n" if lines else ""))
+        return path
 
     def check_shadowed(self, name: str) -> list[tuple[str, str]]:
         """The files of the installed patch the client takes from an archive above it instead (each

@@ -340,7 +340,10 @@ Install (`Direct.go`):
    manifest (`retroport\direct.json` - Install replaces only a patch that has one), the tables,
    the path tables (the client's, read with this route's own patches set aside, plus the new rows), the files, the
    aliases. Then `check`: every path `retailpack.lookups` says the client opens, looked for in the
-   patch and the client.
+   patch and the client. And `out\view-models.txt`: each model with the textures it wears - an
+   item's own (type 2) and its ItemDisplayInfoModelMatRes types (3, 4, 24: `Graph.worn`), a mount's
+   three skins - in the list the x64 client's login-screen viewer reads
+   (retroport-native `tools\x64_model_view.py --list`: the build's look checked without logging in).
 4. **sql** - `out\sql\retail-direct-items.sql`: `DELETE ... WHERE (entry, displayid) IN` the pairs
    this route ever wrote (`ids.json` `owned`), then one INSERT in the kit's format (so
    `itemstats.kit_items` reads it) - the label of a non-default look ("Mythic") as its description

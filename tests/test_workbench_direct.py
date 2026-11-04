@@ -138,9 +138,11 @@ class FakeRetail:
                                 (731968, {"ModelResourcesID": [0, 0], "ModelMaterialResourcesID": [0, 0]})],
             "ModelFileData": [(HEAD, {"FileDataID": HEAD, "ModelResourcesID": 83020})],
             "TextureFileData": [(1, {"FileDataID": 7520491, "MaterialResourcesID": 1087579}),
-                                (2, {"FileDataID": 7520805, "MaterialResourcesID": 900})],
+                                (2, {"FileDataID": 7520805, "MaterialResourcesID": 900}),
+                                (3, {"FileDataID": 948080, "MaterialResourcesID": 901})],
             "ItemDisplayInfoMaterialRes": [(5, {"ItemDisplayInfoID": 731968, "MaterialResourcesID": 900, "ComponentSection": 6})],
-            "ItemDisplayInfoModelMatRes": [],
+            "ItemDisplayInfoModelMatRes": [(6, {"ItemDisplayInfoID": 732008, "MaterialResourcesID": 901, "TextureType": 24,
+                                                "ModelIndex": 0})],
             "Item": [(271546, {"ClassID": 4, "SubclassID": 1, "Material": 7, "InventoryType": 1, "SheatheType": 0,
                                "Sound_override_subclassID": 255}),
                      (271549, {"ClassID": 4, "SubclassID": 1, "Material": 7, "InventoryType": 20, "SheatheType": 0,
@@ -222,6 +224,10 @@ def test_retail_direct_builds_a_patch_the_x64_client_finds_everything_in(tmp_pat
     assert sorted(rows) == [271549, 4271546]                     # the robe's default look; the skull's Mythic one
     assert rows[4271546]["description"] == "Mythic" and rows[271549]["description"] == ""
     assert any("checked: every file the client opens" in line for line in d.lines)
+    view = open(os.path.join(out, "view-models.txt"), encoding="utf-8").read().splitlines()
+    assert view == ["item\\objectcomponents\\head\\helm_cloth_x_be_m.m2\t-35\t-1\t"     # its own texture, and type 24's
+                    "2=item\\objectcomponents\\collections\\cloth_x_shadowflamemythic.blp;"
+                    "24=item\\objectcomponents\\head\\armorreflect4.blp"]
     assert any("A look no item has" in line for line in d.lines)
     st = d.status({"731968", "732008"})
     assert st["built"] and not st["installed"] and st["route"] == "direct"
