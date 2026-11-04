@@ -37,9 +37,19 @@ def test_every_mount_file_goes_in_a_folder_of_its_own():
 def test_a_displays_skins_are_named_in_the_models_folder():
     names, files = MT.texture_names("creature\\retroport\\drake\\drake.mdx",
                                     {0: "creature\\drake\\skin.blp", 1: "creature\\other\\skin.blp", 2: "x\\Glow.BLP"})
-    assert names == ["skin", "skin_1", "glow"]
+    assert names == ["skin", "skin_1", "glow", ""]
     assert files == {"creature\\retroport\\drake\\skin.blp": 0, "creature\\retroport\\drake\\skin_1.blp": 1,
                      "creature\\retroport\\drake\\glow.blp": 2}
+
+
+def test_a_displays_fourth_skin_is_named_for_the_x64_clients_table():
+    names, files = MT.texture_names("creature\\retroport\\cormaera\\cormaera.mdx",
+                                    {0: "creature\\cormaera\\body.blp", 3: "creature\\cormaera\\Body_Glow.blp"})
+    assert names == ["body", "", "", "body_glow"]
+    assert files == {"creature\\retroport\\cormaera\\body.blp": 0, "creature\\retroport\\cormaera\\body_glow.blp": 3}
+    r = MT.Ride(1, "Cormaera", "flying", 7, 250123, 990001, "creature\\retroport\\cormaera\\cormaera.mdx", names)
+    assert MT.skin_table([r]).decode().splitlines()[1:] == ["250123\t5\tbody_glow"]   # type 5, after a comment line
+    assert MT.skin_table([MT.Ride(1, "Horse", "ground", 7, 250124, 990002, "x.mdx", ["skin", "", "", ""])]) is None
 
 
 def test_a_mount_flies_when_one_of_its_capabilities_does():
@@ -352,7 +362,8 @@ def test_direct_ships_retail_files_in_their_own_folder_with_path_rows(tmp_path):
     assert built.files[folder + "drakeskinwhite1.blp"] == 234596                # the display's skin, by its name
     assert built.paths[234564] == ("model", folder + "drakemount.m2") and built.paths[234565][0] == "texture"
     r = built.rides[0]
-    assert r.model_path == folder + "drakemount.mdx" and r.textures == ["drakeskinwhite1", "", ""]
+    assert r.model_path == folder + "drakemount.mdx" and r.textures == ["drakeskinwhite1", "", "", ""]
+    assert MT.SKIN_TABLE not in built.files                                   # no fourth skin: no table
     assert r.geosets == 0x2 and r.item_name == "Reins of the Albino Drake"
     assert r.item_display == MT.ID_BASE and r.item_icon == "ability_mount_drake_proto"   # a row of its own
     idi = DBCFile.from_bytes(built.tables[MT.ITEM_TABLE])
@@ -365,6 +376,22 @@ def test_direct_ships_retail_files_in_their_own_folder_with_path_rows(tmp_path):
     assert "INSERT INTO `spell_dbc`" in built.sql
     again = MP.build(entries, cat, src, str(client), "direct", RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
     assert again.rides[0].id == r.id and "DELETE FROM `creature_template`" in again.sql
+
+
+def test_a_fourth_skin_ships_with_the_x64_clients_table(tmp_path):
+    src, lf, cat, entries = _setup(tmp_path)
+    cat.displays[25836]["textures"] = [234596, 0, 0, 234565]       # retail's fourth: the model's type 5
+    built = MP.build(entries, cat, src, str(_client(tmp_path)), "direct", RP.PATCH, str(tmp_path / "data"), lf,
+                     lambda m: None)
+    r = built.rides[0]
+    folder = "creature\\retroport\\drakemount\\"
+    assert r.textures == ["drakeskinwhite1", "", "", "drakemount_saddle"]
+    assert built.files[folder + "drakemount_saddle.blp"] == 234565
+    assert built.files[MT.SKIN_TABLE].decode().splitlines()[1:] == [f"{r.id}\t5\tdrakemount_saddle"]
+    cdi = DBCFile.from_bytes(built.tables["CreatureDisplayInfo"])
+    row = cdi.find_by_id(r.id)
+    assert [cdi.get_string(row[6 + i]) for i in range(3)] == ["drakeskinwhite1", "", ""]   # the DBC keeps three
+    assert any("fourth skin is for the x64 client" in n for n in built.notes)
 
 
 def test_a_patch_above_holding_the_tables_stops_the_build(tmp_path):

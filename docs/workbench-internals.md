@@ -342,7 +342,7 @@ Install (`Direct.go`):
    aliases. Then `check`: every path `retailpack.lookups` says the client opens, looked for in the
    patch and the client. And `out\view-models.txt`: each model with the textures it wears - an
    item's own (type 2) and its ItemDisplayInfoModelMatRes types (3, 4, 24: `Graph.worn`), a mount's
-   three skins - in the list the x64 client's login-screen viewer reads
+   skins (11, 12, 13 and a fourth's 5: `mounts.SKIN_TYPES`) - in the list the x64 client's login-screen viewer reads
    (retroport-native `tools\x64_model_view.py --list`: the build's look checked without logging in).
 4. **sql** - `out\sql\retail-direct-items.sql`: `DELETE ... WHERE (entry, displayid) IN` the pairs
    this route ever wrote (`ids.json` `owned`), then one INSERT in the kit's format (so
@@ -392,6 +392,12 @@ Placeholders ("[PH] ...") count only with the page's test-mounts box, or when it
   and description; SkillLineAbility - a copy of the stock row in skill line 777;
 - CreatureDisplayInfo - model data id, retail scale and alpha, TextureVariation names, packed
   CreatureGeosetData (nibble per group 1-8: `(GeosetIndex + 1) * 100 + GeosetValue`, 0 none);
+- a fourth skin (109 of retail's mount displays: the Molten Cormaera's body glow, on the model's
+  type 5 texture) has no TextureVariation column: `mounts.skin_table` writes it in the patch's
+  `DBFilesClient\WxlCreatureDisplaySkins.txt` (`display<TAB>type<TAB>name`, a comment line first),
+  which the x64 client's ReplaceMonsterSkin reads (retail tree `WXL/modules/retail-models/DisplaySkins.cpp`);
+  the file goes beside the other skins. A stock client draws without it. Direct carries it as a made
+  file (`Files.made`);
 - CreatureModelData - the stock row of the same model stem (an old mount), else the kind's
   (RidingHorse / DrakeMount) for footprints and blood, with retail's size fields and
   ModelName `creature\retroport\...\<stem>.mdx`;

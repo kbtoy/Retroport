@@ -234,6 +234,18 @@ def test_retail_direct_builds_a_patch_the_x64_client_finds_everything_in(tmp_pat
     assert d.built_record()["entries"] == {"732008": 4271546, "731968": 271549}
 
 
+def test_a_file_made_here_goes_in_the_patch_as_it_is(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    patch = str(tmp_path / "made.MPQ")
+    files = DR.Files({}, {}, {}, [], {}, made={"DBFilesClient\\WxlCreatureDisplaySkins.txt": b"250001\t5\tglow\r\n"})
+    d.pack(patch, {}, files, [], {"time": "", "build": "", "looks": []})
+    m = MPQ(patch)
+    try:
+        assert m.read("DBFilesClient\\WxlCreatureDisplaySkins.txt") == b"250001\t5\tglow\r\n"
+    finally:
+        m.close()
+
+
 def test_retail_direct_installs_backs_up_and_undoes(tmp_path, monkeypatch):
     d = _direct(tmp_path, monkeypatch)
     dest = os.path.join(d.client, "Data", RP.PATCH)

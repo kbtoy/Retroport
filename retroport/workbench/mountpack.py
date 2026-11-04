@@ -253,10 +253,10 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
             continue
         got = MT.allocate(ids, row[0], taken, items_taken)
         client_model = os.path.splitext(MT.relocate(names[model]))[0] + ".m2"
-        tex_ids = {i: f for i, f in enumerate((dd.get("textures") or [])[:3]) if f}
+        tex_ids = {i: f for i, f in enumerate((dd.get("textures") or [])[:len(MT.SKIN_TYPES)]) if f}
         tex = {i: names.get(f, f"{os.path.dirname(names[model])}\\wxl_{f}.blp") for i, f in tex_ids.items()}
-        if len([f for f in (dd.get("textures") or [])[3:] if f]):
-            notes.append(f"{name}: its fourth skin texture has no place in 3.3.5 - left out")
+        if 3 in tex_ids:
+            notes.append(f"{name}: its fourth skin is for the x64 client (a stock client draws without it)")
         tnames, _files = MT.texture_names(client_model, tex)
         packed, lost = MT.geoset_data(dd.get("geosets"))
         if lost:
@@ -309,6 +309,9 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
     for path, fdid in sorted(sound_files.items()):
         out.files[path] = fdid
         out.paths.setdefault(fdid, ("sound", path))
+    skins = MT.skin_table(rides)
+    if skins:
+        out.files[MT.SKIN_TABLE] = skins
     heard = sum(1 for r in rides if r.sound_kits)
     say(f"   sounds: {heard} of {len(rides)} mount(s) with retail's ({len(sounds.kits)} sound kits, "
         f"{len(sound_files)} files, footsteps for {len({row[1] for row in sounds.footsteps})} new kind(s) of feet)")

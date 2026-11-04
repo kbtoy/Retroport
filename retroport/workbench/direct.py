@@ -95,6 +95,7 @@ class Files:
     displays: list[int] | None = None
     dbc: dict[str, bytes] = field(default_factory=dict)       # client tables (the mounts'), "Spell" -> bytes
     rides: list = field(default_factory=list)                  # the mounts (mounts.Ride)
+    made: dict[str, bytes] = field(default_factory=dict)       # files made here (the mounts' skin table), path -> bytes
 
 
 class Direct:
@@ -307,6 +308,7 @@ class Direct:
             files.paths.setdefault(fdid, path)
         for path, v in sorted(built.files.items()):
             if not isinstance(v, int):
+                files.made[path] = v
                 continue
             if v not in files.ship:
                 files.ship[v] = path
@@ -515,6 +517,8 @@ class Direct:
                 w.add(f"DBFilesClient\\{name}.db2", data)
             for name, data in files.dbc.items():
                 w.add(f"DBFilesClient\\{name}.dbc", data)
+            for path, data in sorted(files.made.items()):
+                w.add(path, data)
             w.add(RP.MODEL_PATHS, RP.write_paths(model_rows))
             w.add(RP.TEXTURE_PATHS, RP.write_paths(texture_rows))
             missing = 0
@@ -777,7 +781,7 @@ class Direct:
             seen.add(model)
             folder = model.rsplit("\\", 1)[0]
             names = MT.texture_names(model, r.retail.get("textures") or {})[0]
-            skins = ";".join(f"{11 + i}={folder}\\{n}.blp" for i, n in enumerate(names) if n)
+            skins = ";".join(f"{MT.SKIN_TYPES[i]}={folder}\\{n}.blp" for i, n in enumerate(names) if n)
             lines.append(f"{model}\t-35\t-1\t{skins}")
         path = os.path.join(self.work, "out", "view-models.txt")
         with open(path, "w", encoding="utf-8", newline="\r\n") as fh:

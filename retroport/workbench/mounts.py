@@ -60,6 +60,12 @@ RIDING = {"ground": (150, 40), "flying": (300, 70)}          # RequiredSkillRank
 LEARNING = 483                                              # the stock "Learning" spell items teach with
 MOUNT_SKILL = 777                                           # SkillLine "Mounts" (the spellbook's Mounts tab)
 FOLDER = "creature\\retroport\\"            # every mount file goes under it: no stock file is replaced
+# A display's skins past the three CreatureDisplayInfo holds - retail's fourth, which goes on the model's
+# texture of type 5 (the Molten Cormaera's body glow) - for the x64 client (its retail-models module,
+# DisplaySkins.cpp): a line a skin, "display<TAB>type<TAB>name" (the name in the model's folder, as
+# CreatureDisplayInfo names its three); a stock client has no use for it.
+SKIN_TABLE = "DBFilesClient\\WxlCreatureDisplaySkins.txt"
+SKIN_TYPES = (11, 12, 13, 5)                # the model texture type each of a display's skins goes on
 ID_BASE, ITEM_BASE = 250000, 990000
 
 # Spell.dbc (3.3.5, 234 fields - spell_dbc's columns in order)
@@ -362,13 +368,14 @@ def relocate(path: str) -> str:
 
 
 def texture_names(model_path: str, textures: dict[int, str]) -> tuple[list[str], dict[str, int]]:
-    """A display's skin textures ({slot 0-2: retail path}) as 3.3.5 names them - by name in the
+    """A display's skin textures ({slot 0-3: retail path}) as 3.3.5 names them - by name in the
     model's folder - and where each file goes there ({path: slot}); two that share a name in different
-    folders keep apart by their slot."""
+    folders keep apart by their slot. Slots 0-2 are CreatureDisplayInfo's; 3, retail's fourth, goes in
+    ``SKIN_TABLE``."""
     folder = model_path.rsplit("\\", 1)[0]
-    names, files, used = ["", "", ""], {}, {}
+    names, files, used = ["", "", "", ""], {}, {}
     for slot in sorted(textures):
-        if not 0 <= slot < 3 or not textures[slot]:
+        if not 0 <= slot < len(SKIN_TYPES) or not textures[slot]:
             continue
         stem = os.path.splitext(textures[slot].replace("/", "\\").rsplit("\\", 1)[-1])[0].lower()
         if used.get(stem, textures[slot]) != textures[slot]:
@@ -552,6 +559,16 @@ def model_row(cmd, template: list[int] | None, r: Ride) -> list[int]:
         if m.get(k) is not None:
             row[CMD_MISSILE + i] = f2u(m[k])
     return row
+
+
+def skin_table(rides: list[Ride]) -> bytes | None:
+    """``SKIN_TABLE`` for ``rides``: each display's skins past the three (None when none has one)."""
+    lines = [f"{r.id}\t{SKIN_TYPES[slot]}\t{name}" for r in rides
+             for slot, name in enumerate(r.textures) if slot >= 3 and name]
+    if not lines:
+        return None
+    return ("# display\ttexture type\tname in the model's folder: retail's skins past CreatureDisplayInfo's "
+            "three (the x64 client)\r\n" + "\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
 def display_row(cdi, r: Ride) -> list[int]:
