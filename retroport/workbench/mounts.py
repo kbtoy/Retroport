@@ -38,7 +38,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-CATALOG_VERSION = 4
+CATALOG_VERSION = 5
 SOURCE_TABLES = ("Mount", "MountXDisplay", "MountTypeXCapability", "MountCapability", "CreatureDisplayInfo",
                  "CreatureModelData", "CreatureDisplayInfoGeosetData", "SpellMisc", "ItemEffect", "ItemXItemEffect",
                  "ItemSearchName", "CreatureSoundData", "FootstepTerrainLookup", "SoundKit", "SoundKitEntry",
@@ -73,7 +73,9 @@ SKIN_TYPES = (11, 12, 13, 5)                # the model texture type each of a d
 # path<TAB>scale<TAB>alpha<TAB>x,y,z offset<TAB>yaw,pitch,roll<TAB>animation<TAB>start<TAB>end"
 # (-1: none); and its gradient shading (the spectral mounts' ghostly blue), a line
 # "display<TAB>gradient<TAB>low r,g,b<TAB>middle r,g,b<TAB>high r,g,b<TAB>middle value<TAB>rim power<TAB>edge
-# r,g,b<TAB>flags" (1: no height fade). Its dissolve is not in it yet.
+# r,g,b<TAB>flags" (1: no height fade); and how far it banks into a turn while flying where that is not
+# retail's usual 45 degrees (CreatureDisplayInfo.MountMaxBankingAngle; 20 on 38 mounts), a line
+# "display<TAB>bank<TAB>degrees". Its dissolve is not in it yet.
 STATE_TABLE = "DBFilesClient\\WxlCreatureDisplayStates.txt"
 ID_BASE, ITEM_BASE = 250000, 990000
 
@@ -288,7 +290,8 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
                                                                 "MissileCollisionPush", "MissileCollisionRaise")},
                            "sound": c.get("SoundID") or m.get("SoundID") or 0,
                            "state": kit_models.get(c.get("StateSpellVisualKitID") or 0, []),
-                           "gradient": kit_gradients.get(c.get("StateSpellVisualKitID") or 0)}
+                           "gradient": kit_gradients.get(c.get("StateSpellVisualKitID") or 0),
+                           "bank": c.get("MountMaxBankingAngle")}
     sounds = sound_bundle(t, {v["sound"] for v in displays.values() if v["sound"]})
     log(f"{src.spec.label}: {len(mounts)} mounts, {len(sounds['kits'])} sound kits ({time.time() - t0:.0f} s)")
     return MountCatalog(src.key, src.build, mounts, displays, sounds)
@@ -372,6 +375,8 @@ def state_table(rides: list[Ride]) -> bytes | None:
                                     f"{s['alpha']:g}", ",".join(f"{v:g}" for v in s["offset"]),
                                     ",".join(f"{v:g}" for v in s["rotation"]), str(s["anim"]), str(s["start"]),
                                     str(s["end"])]))
+        if r.bank is not None and r.bank >= 0 and abs(r.bank - 45.0) > 1e-3:
+            lines.append(f"{r.id}	bank	{r.bank:g}")
         g = r.gradient
         if g:
             def rgb(v):
@@ -616,6 +621,7 @@ class Ride:
     item_template: list | None = None            # the stock mount item's ItemDisplayInfo row that row copies
     state: list[dict] = field(default_factory=list)  # its state kit's models (``state_attachments``; "path" once placed)
     gradient: dict | None = None                 # its state kit's gradient shading (``state_gradients``)
+    bank: float | None = None                    # retail's MountMaxBankingAngle (degrees; 45 the usual)
 
 
 @dataclass

@@ -701,3 +701,8 @@ def test_retail_direct_undo_leaves_an_archive_another_install_replaced(tmp_path,
         assert m.read("before") == b"1"
     finally:
         m.close()
+
+def test_a_mounts_banking_angle_is_listed_only_where_it_is_not_retails_usual():
+    r20 = MT.Ride(1, "Blanchy", "ground", 7, 250127, 990005, "x.mdx", ["", "", "", ""], bank=20.0)
+    r45 = MT.Ride(2, "Gryphon", "flying", 8, 250128, 990006, "y.mdx", ["", "", "", ""], bank=45.0)
+    assert MT.state_table([r20, r45]).decode().splitlines()[1:] == ["250127	bank	20"]

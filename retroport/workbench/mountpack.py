@@ -284,7 +284,8 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                                         "icon": icon_fdid, "names": names},
                              item_icon=item_icon, item_template=stock_item,
                              state=[dict(s) for s in dd.get("state") or [] if s.get("model") in names],
-                             gradient=dd.get("gradient") if route != "kit" else None))
+                             gradient=dd.get("gradient") if route != "kit" else None,
+                             bank=dd.get("bank") if route != "kit" else None))
         if dd.get("gradient"):
             notes.append(f"{name}: retail shades it with a gradient - for the x64 client"
                          + (" (the converter route leaves it out)" if route == "kit" else ""))
