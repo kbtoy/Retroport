@@ -814,6 +814,39 @@ def race_cmd(
     console.print(f"  install steps: {os.path.join(out, 'INSTALL.txt')}")
 
 
+@app.command(name="race-identity")
+def race_identity_cmd(
+    race: str = typer.Argument("EarthenDwarf", help="A registry race's retail ClientFileString (Earthen: EarthenDwarf)."),
+    retail: str = typer.Option(..., "--retail", help="A local retail install, e.g. I:\\World of Warcraft."),
+    client: str = typer.Option(..., "--client", help="The x64 client folder (read only; its DBCs and UI are the base)."),
+    out: str = typer.Option(..., "--out", help="Output folder (client\\, server\\, package.json, INSTALL.txt)."),
+    listfile: str = typer.Option(..., "--listfile", help="Community listfile.csv."),
+    dbd: str = typer.Option(..., "--dbd", help="WoWDBDefs 'definitions' folder."),
+    server_dbc: str = typer.Option(..., "--server-dbc", help="The server's DBC folder (read only)."),
+    patch: str = typer.Option("patch-H.MPQ", "--patch", help="The folder patch the package installs into."),
+) -> None:
+    """A registry race's own names, voice, create-screen icon, scene and texts, and racials (races past 32,
+    which the x64 client's wxl-races.cfg adds; Earthen 33/34)."""
+    from .race.identity import EARTHEN, build_identity
+
+    if race != EARTHEN["file"]:
+        console.print("[red]only Earthen (EarthenDwarf) has its races and racial picks set up[/]")
+        raise typer.Exit(code=2)
+    try:
+        r = build_identity(install_dir=retail, client_dir=client, out_dir=out, listfile=listfile, dbd_dir=dbd,
+                           server_dbc_dir=server_dbc, patch=patch,
+                           on_log=lambda m: console.print(m, markup=False, highlight=False))
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=2)
+    console.print(f"\n[green]{r.name}[/]: " + ", ".join(f"race {s['race_id']} ({s['faction']})" for s in r.races))
+    for side, rows in r.rows.items():
+        console.print(f"  {side} rows: {rows}", highlight=False)
+    for w in r.warnings:
+        console.print(f"  [yellow]warn[/] {w}", highlight=False)
+    console.print(f"  install steps: {os.path.join(out, 'INSTALL.txt')}")
+
+
 @app.command(name="glue")
 def glue_cmd(
     bfa: str = typer.Option(..., "--bfa", help="A local BfA (8.x) install."),

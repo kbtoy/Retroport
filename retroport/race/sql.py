@@ -35,6 +35,7 @@ class RacialSql:
     name: str                                             # "Racial - Kul Tiran"
     excluded_skills: list[int]                            # 3.3.5's racial lines, not copied from the template
     ap_bonus: dict[int, float] = field(default_factory=dict)      # spell -> spell_bonus_data.ap_bonus
+    sp_bonus: dict[int, float] = field(default_factory=dict)      # spell -> spell_bonus_data.direct_bonus
     scripts: dict[int, str] = field(default_factory=dict)         # spell -> spell_script_names.ScriptName
     procs: dict[int, int] = field(default_factory=dict)           # scripted spell -> its proc flags (spell_proc)
     no_bonus: list[int] = field(default_factory=list)             # spells whose amount a script sets
@@ -127,56 +128,9 @@ def race_sql(specs: list[RaceSpec], name: str, displays: dict[int, int],
         mask = 0
         for s in specs:
             mask |= s.bit
-        out += [f"-- its own racials: {racial.name} (skill line {racial.skill_line})",
-                f"DELETE FROM `playercreateinfo_skills` WHERE `skill` = {racial.skill_line};",
-                "INSERT INTO `playercreateinfo_skills` (`raceMask`, `classMask`, `skill`, `rank`, `comment`) VALUES "
-                f"({mask}, 0, {racial.skill_line}, 0, '{_sql_text(racial.name)}');"]
-        undo.append(f"DELETE FROM `playercreateinfo_skills` WHERE `skill` = {racial.skill_line};")
-        if racial.ap_bonus:
-            ids = ", ".join(str(k) for k in racial.ap_bonus)
-            out += [f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});"]
-            out += [f"INSERT INTO `spell_bonus_data` (`entry`, `direct_bonus`, `dot_bonus`, `ap_bonus`, `ap_dot_bonus`, "
-                    f"`comments`) VALUES ({k}, 0, 0, {v:g}, 0, '{_sql_text(racial.name)}');" for k, v in racial.ap_bonus.items()]
-            undo.append(f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});")
-        if racial.no_bonus:
-            ids = ", ".join(str(k) for k in racial.no_bonus)
-            out += [f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});"]
-            out += [f"INSERT INTO `spell_bonus_data` (`entry`, `direct_bonus`, `dot_bonus`, `ap_bonus`, `ap_dot_bonus`, "
-                    f"`comments`) VALUES ({k}, 0, 0, 0, 0, '{_sql_text(racial.name)}: amount set by script');"
-                    for k in racial.no_bonus]
-            undo.append(f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});")
-        if racial.scripts:
-            ids = ", ".join(str(k) for k in racial.scripts)
-            out += ["-- needs the AzerothCore module mod-retroport-racials (retroport-tool\\native)",
-                    f"DELETE FROM `spell_script_names` WHERE `spell_id` IN ({ids});"]
-            out += [f"INSERT INTO `spell_script_names` (`spell_id`, `ScriptName`) VALUES ({k}, '{v}');"
-                    for k, v in racial.scripts.items()]
-            undo.append(f"DELETE FROM `spell_script_names` WHERE `spell_id` IN ({ids});")
-        if racial.procs:
-            ids = ", ".join(str(k) for k in racial.procs)
-            out += [f"DELETE FROM `spell_proc` WHERE `SpellId` IN ({ids});"]
-            # BfA's flags, on damage; on hit for a spell the owner casts (AzerothCore checks the
-            # phase for those only, and warns about one given for anything else)
-            out += ["INSERT INTO `spell_proc` (`SpellId`, `ProcFlags`, `SpellTypeMask`, `SpellPhaseMask`, `Chance`) "
-                    f"VALUES ({k}, {v}, 1, {PROC_PHASE_HIT if v & REQ_SPELL_PHASE_FLAGS else 0}, 100);"
-                    for k, v in racial.procs.items()]
-            undo.append(f"DELETE FROM `spell_proc` WHERE `SpellId` IN ({ids});")
-        for script, spells in racial.bound.items():
-            out += [f"-- {script} on the spells a racial changes (mod-retroport-racials)",
-                    f"DELETE FROM `spell_script_names` WHERE `ScriptName` = '{script}';"]
-            if spells:
-                out.append("INSERT INTO `spell_script_names` (`spell_id`, `ScriptName`) VALUES "
-                           + ", ".join(f"({s}, '{script}')" for s in spells) + ";")
-            undo.append(f"DELETE FROM `spell_script_names` WHERE `ScriptName` = '{script}';")
-        if racial.pet_auras:
-            # AzerothCore casts the pet spell on every permanent pet while the racial's dummy aura is on
-            ids = ", ".join(str(k) for k in sorted({s for s, _e, _a in racial.pet_auras}))
-            out += ["-- what its racials give the pet (AzerothCore's spell_pet_auras; pet 0 = every pet)",
-                    f"DELETE FROM `spell_pet_auras` WHERE `spell` IN ({ids});",
-                    "INSERT INTO `spell_pet_auras` (`spell`, `effectId`, `pet`, `aura`) VALUES "
-                    + ", ".join(f"({s}, {e}, 0, {a})" for s, e, a in racial.pet_auras) + ";"]
-            undo.append(f"DELETE FROM `spell_pet_auras` WHERE `spell` IN ({ids});")
-        out.append("")
+        lines, undo_lines = racial_sql_lines(racial, mask)
+        out += lines
+        undo += undo_lines
     if start_items:
         ids = ", ".join(str(i.entry) for i in start_items)
         out += ["-- its own start outfits (BfA's armour and weapons): new characters get them through CharStartOutfit.dbc",
@@ -207,6 +161,67 @@ def race_sql(specs: list[RaceSpec], name: str, displays: dict[int, int],
                        f"FROM `creature_model_info` WHERE `DisplayID` = {tpl};")
         undo.append(f"DELETE FROM `creature_model_info` WHERE `DisplayID` IN ({ids});")
     return "\n".join(out) + "\n", "\n".join(undo) + "\n"
+
+
+def racial_sql_lines(racial: RacialSql, race_mask: int) -> tuple[list[str], list[str]]:
+    """(install, undo) lines that give the races of ``race_mask`` (0: every race the line's
+    SkillRaceClassInfo rows let have it - a registry race past 32, race/identity.py) their own
+    racial skill line and its spells' server rows."""
+    out: list[str] = []
+    undo: list[str] = []
+    out += [f"-- its own racials: {racial.name} (skill line {racial.skill_line})",
+            f"DELETE FROM `playercreateinfo_skills` WHERE `skill` = {racial.skill_line};",
+            "INSERT INTO `playercreateinfo_skills` (`raceMask`, `classMask`, `skill`, `rank`, `comment`) VALUES "
+            f"({race_mask}, 0, {racial.skill_line}, 0, '{_sql_text(racial.name)}');"]
+    undo.append(f"DELETE FROM `playercreateinfo_skills` WHERE `skill` = {racial.skill_line};")
+    bonus = sorted(set(racial.ap_bonus) | set(racial.sp_bonus))
+    if bonus:
+        ids = ", ".join(str(k) for k in bonus)
+        out += [f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});"]
+        out += [f"INSERT INTO `spell_bonus_data` (`entry`, `direct_bonus`, `dot_bonus`, `ap_bonus`, `ap_dot_bonus`, "
+                f"`comments`) VALUES ({k}, {racial.sp_bonus.get(k, 0):g}, 0, {racial.ap_bonus.get(k, 0):g}, 0, "
+                f"'{_sql_text(racial.name)}');" for k in bonus]
+        undo.append(f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});")
+    if racial.no_bonus:
+        ids = ", ".join(str(k) for k in racial.no_bonus)
+        out += [f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});"]
+        out += [f"INSERT INTO `spell_bonus_data` (`entry`, `direct_bonus`, `dot_bonus`, `ap_bonus`, `ap_dot_bonus`, "
+                f"`comments`) VALUES ({k}, 0, 0, 0, 0, '{_sql_text(racial.name)}: amount set by script');"
+                for k in racial.no_bonus]
+        undo.append(f"DELETE FROM `spell_bonus_data` WHERE `entry` IN ({ids});")
+    if racial.scripts:
+        ids = ", ".join(str(k) for k in racial.scripts)
+        out += ["-- needs the AzerothCore module mod-retroport-racials (retroport-tool\\native)",
+                f"DELETE FROM `spell_script_names` WHERE `spell_id` IN ({ids});"]
+        out += [f"INSERT INTO `spell_script_names` (`spell_id`, `ScriptName`) VALUES ({k}, '{v}');"
+                for k, v in racial.scripts.items()]
+        undo.append(f"DELETE FROM `spell_script_names` WHERE `spell_id` IN ({ids});")
+    if racial.procs:
+        ids = ", ".join(str(k) for k in racial.procs)
+        out += [f"DELETE FROM `spell_proc` WHERE `SpellId` IN ({ids});"]
+        # BfA's flags, on damage; on hit for a spell the owner casts (AzerothCore checks the
+        # phase for those only, and warns about one given for anything else)
+        out += ["INSERT INTO `spell_proc` (`SpellId`, `ProcFlags`, `SpellTypeMask`, `SpellPhaseMask`, `Chance`) "
+                f"VALUES ({k}, {v}, 1, {PROC_PHASE_HIT if v & REQ_SPELL_PHASE_FLAGS else 0}, 100);"
+                for k, v in racial.procs.items()]
+        undo.append(f"DELETE FROM `spell_proc` WHERE `SpellId` IN ({ids});")
+    for script, spells in racial.bound.items():
+        out += [f"-- {script} on the spells a racial changes (mod-retroport-racials)",
+                f"DELETE FROM `spell_script_names` WHERE `ScriptName` = '{script}';"]
+        if spells:
+            out.append("INSERT INTO `spell_script_names` (`spell_id`, `ScriptName`) VALUES "
+                       + ", ".join(f"({s}, '{script}')" for s in spells) + ";")
+        undo.append(f"DELETE FROM `spell_script_names` WHERE `ScriptName` = '{script}';")
+    if racial.pet_auras:
+        # AzerothCore casts the pet spell on every permanent pet while the racial's dummy aura is on
+        ids = ", ".join(str(k) for k in sorted({s for s, _e, _a in racial.pet_auras}))
+        out += ["-- what its racials give the pet (AzerothCore's spell_pet_auras; pet 0 = every pet)",
+                f"DELETE FROM `spell_pet_auras` WHERE `spell` IN ({ids});",
+                "INSERT INTO `spell_pet_auras` (`spell`, `effectId`, `pet`, `aura`) VALUES "
+                + ", ".join(f"({s}, {e}, 0, {a})" for s, e, a in racial.pet_auras) + ";"]
+        undo.append(f"DELETE FROM `spell_pet_auras` WHERE `spell` IN ({ids});")
+    out.append("")
+    return out, undo
 
 
 def characters_cleanup_sql(specs: list[RaceSpec], name: str, racial: RacialSql) -> str:

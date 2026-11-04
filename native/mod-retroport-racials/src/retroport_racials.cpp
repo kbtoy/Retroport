@@ -36,11 +36,23 @@
  * damage and healing done, Might's damage-taken half below as Brush It Off's. Savage Blood, Open
  * Skies and Sympathetic Vigor need nothing here (3.3.5's own auras; the pet's health through
  * AzerothCore's spell_pet_auras).
+ *
+ * Earthen (races 33/34, from retail; `retroport race-identity`, the user's picks of 2026-11-03):
+ * Wide-Eyed Wonder (448924, dummy aura 200): exploration experience up by its amount (x3).
+ * Ingest Minerals (436341, dummy aura): always Well Fed, no food. The player keeps one of the
+ *   package's own Well Fed buffs (233910-233916: permanent, kept through death, not cancelled) -
+ *   Stamina until a gem says otherwise; Ingest Gem (233901, an item-target cast like Prospecting)
+ *   eats a gem and puts on the buff of its color. Food (an item whose spell is food, or food and
+ *   drink) can't be used; drink can. A level-up puts the buff on again, so it grows with the level.
+ * Quiet Contemplation (461063): seated, health a % of the maximum a second - 3.3.5's aura heals a
+ *   flat amount, made the % here; mana is 3.3.5's own % aura.
+ * Azerite Surge, Titan-Wrought Frame and Hyper Productive are plain spells.
  */
 
 #include <cmath>
 #include "DatabaseEnv.h"
 #include "DataMap.h"
+#include "Item.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "SpellAuraEffects.h"
@@ -62,11 +74,24 @@ enum RetroportRacialSpells
     SPELL_MO_ZEAL              = 274740,                    // Zeal of the Burning Blade: haste
     SPELL_MO_FEROCITY          = 274741,                    // Ferocity of the Frostwolf: mastery
     SPELL_MO_MIGHT             = 274742,                    // Might of the Blackrock: versatility
+    SPELL_EA_WIDE_EYED_WONDER  = 448924,
+    SPELL_EA_INGEST_MINERALS   = 436341,
+    SPELL_EA_INGEST_GEM        = 233901,                    // the package's own: eat a gem
+    SPELL_EA_FED_CRIT          = 233910,                    // its Well Fed buffs, one a gem color
+    SPELL_EA_FED_HASTE         = 233911,
+    SPELL_EA_FED_STAMINA       = 233912,
+    SPELL_EA_FED_VERSATILITY   = 233913,
+    SPELL_EA_FED_HIT           = 233914,
+    SPELL_EA_FED_ATTACK_POWER  = 233915,
+    SPELL_EA_FED_SPELL_POWER   = 233916,
 };
+
+constexpr uint32 RETROPORT_EARTHEN_FED[] = { SPELL_EA_FED_CRIT, SPELL_EA_FED_HASTE, SPELL_EA_FED_STAMINA,
+    SPELL_EA_FED_VERSATILITY, SPELL_EA_FED_HIT, SPELL_EA_FED_ATTACK_POWER, SPELL_EA_FED_SPELL_POWER };
 
 // the racials whose 3.3.5 form is Versatility's: their first aura is its damage and healing done (N%),
 // and the damage they take is N/2% less (BfA: 1% Versatility is 0.5% less damage taken)
-constexpr uint32 RETROPORT_VERSATILITY_SPELLS[] = { SPELL_KT_BRUSH_IT_OFF, SPELL_MO_MIGHT };
+constexpr uint32 RETROPORT_VERSATILITY_SPELLS[] = { SPELL_KT_BRUSH_IT_OFF, SPELL_MO_MIGHT, SPELL_EA_FED_VERSATILITY };
 
 // the per-player state the hooks share (Object::CustomData: each player's own, updated on its map)
 struct RetroportLanding : public DataMap::Base
@@ -221,6 +246,101 @@ class spell_retroport_rating_pct : public AuraScript
     }
 };
 
+// the Well Fed an Ingest Minerals player has on (0: none)
+static uint32 RetroportEarthenFed(Player* player)
+{
+    for (uint32 fed : RETROPORT_EARTHEN_FED)
+        if (player->HasAura(fed))
+            return fed;
+    return 0;
+}
+
+// that Well Fed on, and no other of them
+static void RetroportEarthenSetFed(Player* player, uint32 fed)
+{
+    for (uint32 other : RETROPORT_EARTHEN_FED)
+        if (other != fed)
+            player->RemoveAurasDueToSpell(other);
+    player->RemoveAurasDueToSpell(fed);
+    player->CastSpell(player, fed, true);
+}
+
+// a gem's Well Fed by its color (ItemSubclassGem): red critical strike, blue damage and healing done
+// (versatility's 3.3.5 form), yellow Stamina, purple hit, green haste, orange attack power, meta spell
+// power; simple and prismatic Stamina
+static uint32 RetroportEarthenFedForGem(uint32 subclass)
+{
+    switch (subclass)
+    {
+        case 0: return SPELL_EA_FED_CRIT;
+        case 1: return SPELL_EA_FED_VERSATILITY;
+        case 3: return SPELL_EA_FED_HIT;
+        case 4: return SPELL_EA_FED_HASTE;
+        case 5: return SPELL_EA_FED_ATTACK_POWER;
+        case 6: return SPELL_EA_FED_SPELL_POWER;
+        default: return SPELL_EA_FED_STAMINA;
+    }
+}
+
+// 233901 - Ingest Gem (Earthen): eats the gem it targets, its color picks the Well Fed. The gem goes
+// after the cast, when the spell no longer uses its target.
+class spell_retroport_ingest_gem : public SpellScript
+{
+    PrepareSpellScript(spell_retroport_ingest_gem);
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_EA_FED_CRIT, SPELL_EA_FED_HASTE, SPELL_EA_FED_STAMINA, SPELL_EA_FED_VERSATILITY,
+                                   SPELL_EA_FED_HIT, SPELL_EA_FED_ATTACK_POWER, SPELL_EA_FED_SPELL_POWER });
+    }
+
+    SpellCastResult CheckCast()
+    {
+        Unit* caster = GetCaster();
+        Item* gem = GetExplTargetItem();
+        if (!caster || !caster->IsPlayer() || !gem || gem->GetOwnerGUID() != caster->GetGUID()
+            || gem->GetTemplate()->Class != ITEM_CLASS_GEM)
+            return SPELL_FAILED_BAD_TARGETS;
+        return SPELL_CAST_OK;
+    }
+
+    void HandleAfterCast()
+    {
+        Player* player = GetCaster() ? GetCaster()->ToPlayer() : nullptr;
+        Item* gem = GetExplTargetItem();
+        if (!player || !gem || gem->GetOwnerGUID() != player->GetGUID())
+            return;
+        uint32 fed = RetroportEarthenFedForGem(gem->GetTemplate()->SubClass);
+        uint32 count = 1;
+        player->DestroyItemCount(gem, count, true);
+        RetroportEarthenSetFed(player, fed);
+    }
+
+    void Register() override
+    {
+        OnCheckCast += SpellCheckCastFn(spell_retroport_ingest_gem::CheckCast);
+        AfterCast += SpellCastFn(spell_retroport_ingest_gem::HandleAfterCast);
+    }
+};
+
+// 461063 - Quiet Contemplation (Earthen): the health a tick is its amount in % of the maximum
+class spell_retroport_quiet_contemplation : public AuraScript
+{
+    PrepareAuraScript(spell_retroport_quiet_contemplation);
+
+    void CalcAmount(AuraEffect const* /*aurEff*/, int32& amount, bool& /*canBeRecalculated*/)
+    {
+        if (Unit* owner = GetUnitOwner())
+            amount = int32(owner->CountPctFromMaxHealth(amount));
+    }
+
+    void Register() override
+    {
+        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_retroport_quiet_contemplation::CalcAmount, EFFECT_0,
+                                                     SPELL_AURA_OBS_MOD_HEALTH);
+    }
+};
+
 // Versatility's damage-taken half for the racials that give it; Bouncy's falls
 class retroport_racials_unit_script : public UnitScript
 {
@@ -296,6 +416,56 @@ public:
     }
 };
 
+// Earthen: Ingest Minerals' Well Fed and its no food; Wide-Eyed Wonder's exploration
+class retroport_racials_earthen_script : public PlayerScript
+{
+public:
+    retroport_racials_earthen_script() : PlayerScript("retroport_racials_earthen_script",
+        { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_LEVEL_CHANGED, PLAYERHOOK_CAN_USE_ITEM, PLAYERHOOK_ON_GIVE_EXP }) { }
+
+    // the Well Fed it logged out with (a saved aura), else Stamina's
+    void OnPlayerLogin(Player* player) override
+    {
+        if (player->HasSpell(SPELL_EA_INGEST_MINERALS) && !RetroportEarthenFed(player))
+            RetroportEarthenSetFed(player, SPELL_EA_FED_STAMINA);
+    }
+
+    // put on again at the new level: its stats grow with the level (the ratings are worked out for it)
+    void OnPlayerLevelChanged(Player* player, uint8 /*oldLevel*/) override
+    {
+        if (!player->HasSpell(SPELL_EA_INGEST_MINERALS))
+            return;
+        uint32 fed = RetroportEarthenFed(player);
+        RetroportEarthenSetFed(player, fed ? fed : SPELL_EA_FED_STAMINA);
+    }
+
+    // no food: an item whose spell eats (food, or food and drink); drink alone is fine
+    bool OnPlayerCanUseItem(Player* player, ItemTemplate const* proto, InventoryResult& result) override
+    {
+        if (!proto || proto->Class != ITEM_CLASS_CONSUMABLE || !player->HasSpell(SPELL_EA_INGEST_MINERALS))
+            return true;
+        for (auto const& spell : proto->Spells)
+            if (SpellInfo const* info = spell.SpellId > 0 ? sSpellMgr->GetSpellInfo(spell.SpellId) : nullptr)
+            {
+                SpellSpecificType kind = info->GetSpellSpecific();
+                if (kind == SPELL_SPECIFIC_FOOD || kind == SPELL_SPECIFIC_FOOD_AND_DRINK)
+                {
+                    result = EQUIP_ERR_CANT_DO_RIGHT_NOW;
+                    return false;
+                }
+            }
+        return true;
+    }
+
+    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* /*victim*/, uint8 xpSource) override
+    {
+        if (xpSource != XPSOURCE_EXPLORE)
+            return;
+        if (AuraEffect const* wonder = player->GetAuraEffect(SPELL_EA_WIDE_EYED_WONDER, EFFECT_0))
+            amount += uint32(CalculatePct(float(amount), float(wonder->GetAmount())));
+    }
+};
+
 // clears Bouncy's landing mark once the packet is handled
 class retroport_racials_movement_script : public MovementHandlerScript
 {
@@ -316,7 +486,10 @@ void AddRetroportRacialsScripts()
     RegisterSpellScript(spell_retroport_epicurean);
     RegisterSpellScript(spell_retroport_ancestral_call);
     RegisterSpellScript(spell_retroport_rating_pct);
+    RegisterSpellScript(spell_retroport_ingest_gem);
+    RegisterSpellScript(spell_retroport_quiet_contemplation);
     new retroport_racials_unit_script();
     new retroport_racials_player_script();
+    new retroport_racials_earthen_script();
     new retroport_racials_movement_script();
 }

@@ -188,11 +188,12 @@ def add_icons(icons: DBCFile, plan: RacialPlan) -> dict[int, int]:
 
 
 def add_spells(table: RawDBC, layout: DbcLayout, plan: RacialPlan, spells: BfaSpells, icon_ids: dict[int, int],
-               visual_ids: dict[int, int] | None = None) -> int:
-    """The plan's Spell.dbc rows, texts, icons and visuals set, in one table (client or server)."""
+               visual_ids: dict[int, int] | None = None, texts_for: dict[int, dict[str, str]] | None = None) -> int:
+    """The plan's Spell.dbc rows, texts, icons and visuals set, in one table (client or server).
+    ``texts_for``: tooltips in place of TEXTS' (a registry race's own picks, race/identity.py)."""
     added = 0
     for s, p in plan.ported.items():
-        texts = spell_texts(spells, plan.ported, s, TEXTS.get(s))
+        texts = spell_texts(spells, plan.ported, s, (TEXTS if texts_for is None else texts_for).get(s))
         for k, row in enumerate(p.rows + p.pet_rows):
             row = list(row)
             if table.find_by_id(row[0]) is not None:
