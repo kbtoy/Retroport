@@ -17,6 +17,7 @@
 <nav class="side">
   <button class="nav on" data-view="items">Items</button>
   <button class="nav" data-view="sets">Sets &amp; collections</button>
+  <button class="nav" data-view="mounts">Mounts</button>
   <button class="nav" data-view="basket">Basket <span class="count" id="basket-count">0</span></button>
   <button class="nav" data-view="stats">Stats <span class="count warn" id="stats-state" hidden></span></button>
   <button class="nav" data-view="backport">Backport <span class="count" id="kit-state"></span></button>
@@ -63,6 +64,18 @@
     <div class="summary" id="set-summary"></div>
     <div class="grid sets" id="set-grid"></div>
     <button class="more" id="set-more" hidden>Load more</button>
+  </section>
+
+  <section class="view" id="view-mounts" hidden>
+    <div class="filters" id="mount-filters">
+      <div class="seg" role="tablist" aria-label="Mount kind">
+        <button class="on" data-kind="">All mounts</button><button data-kind="ground">Ground</button><button data-kind="flying">Flying</button>
+      </div>
+      <label class="check" title="Blizzard's [DNT], [PH] and test mounts"><input type="checkbox" id="m-junk"> Test mounts</label>
+    </div>
+    <div class="summary" id="mount-summary"></div>
+    <div class="grid items" id="mount-grid"></div>
+    <button class="more" id="mount-more" hidden>Load more</button>
   </section>
 
   <section class="view" id="view-basket" hidden>
@@ -122,6 +135,7 @@
         and the bodies the character view dresses come from <b>wago.tools</b>, so there's nothing else to install.</p>
     </div>
     <div class="panel"><h3>Your game and server</h3><div class="form" id="st-game"></div></div>
+    <div class="panel"><h3>How Install puts items in</h3><div class="form" id="st-route"></div></div>
     <div class="panel"><h3>Where the items come from</h3><div class="form" id="st-sources"></div></div>
     <div class="panel"><h3>Backport kit</h3><div class="form" id="st-kit"></div></div>
     <div class="actions sticky-save"><button class="btn" id="st-save">Save</button>
@@ -158,8 +172,8 @@
       <pre id="k-log"></pre>
     </details>
     <details class="panel" id="k-advanced">
-      <summary>The kit's steps <span class="muted">(advanced)</span></summary>
-      <p class="muted small">Install runs these for you. Redo one when you changed something by hand; Build only
+      <summary><span id="k-steps-title">The kit's steps</span> <span class="muted">(advanced)</span></summary>
+      <p class="muted small" id="k-steps-note">Install runs these for you. Redo one when you changed something by hand; Build only
         stops before the install. The kit draws a preview picture of each piece into the project's sheets folder.</p>
       <div id="k-steps" class="steps"></div>
       <div class="actions"><button class="btn ghost" id="k-build">Build only</button>

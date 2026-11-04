@@ -36,6 +36,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from . import deps
+from . import eprows as EP
 from . import itemids
 from . import kitlocal as KL
 
@@ -113,12 +114,21 @@ def python_exe() -> str:
     return exe
 
 
+X64_EXE = "WowClient64.exe"       # the x64 3.3.5 client (wowdecomp-dx11): Equip Plus's rows built in
+CLIENT_EXES = ("Wow.exe", X64_EXE)
+
+
+def is_x64_client(root: str) -> bool:
+    """Whether the client folder holds the x64 client (it draws Equip Plus's pieces itself)."""
+    return bool(root) and os.path.isfile(os.path.join(root, X64_EXE))
+
+
 def wow_running() -> bool:
     if os.name != "nt":
         return False
     try:
-        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Wow.exe"], capture_output=True, text=True).stdout
-        return "wow.exe" in out.lower()
+        out = subprocess.run(["tasklist", "/NH", "/FO", "CSV"], capture_output=True, text=True).stdout.lower()
+        return any(f'"{exe.lower()}"' in out for exe in CLIENT_EXES)
     except OSError:
         return False
 
@@ -254,24 +264,32 @@ class Kit:
         rescue = os.path.join(self.cfg.work, "out", "equip-plus-rescue", "sql", "item_template.sql")
         if os.path.isfile(rescue):
             out.append(rescue)
+        mounts = (self.last_install() or {}).get("mounts_sql")      # the workbench's mounts (mountpack)
+        if mounts and os.path.isfile(mounts):
+            out.append(mounts)
         return out
 
     def client_root(self) -> str:
         return os.path.dirname(os.path.normpath(self.cfg.client_data)) if self.cfg.client_data else ""
 
     def equip_plus_installed(self) -> bool:
-        """Whether the client has WarcraftXL's Equip Plus (it draws the 3D pieces a stock client can't)."""
+        """Whether the client has WarcraftXL's Equip Plus (it draws the 3D pieces a stock client can't) -
+        the x64 client reads Equip Plus's rows itself."""
         root = self.client_root()
-        return bool(root) and os.path.isfile(os.path.join(root, "Extensions", "wxl-equip-plus", "wxl-equip-plus.dll"))
+        return bool(root) and (is_x64_client(root) or
+                               os.path.isfile(os.path.join(root, "Extensions", "wxl-equip-plus", "wxl-equip-plus.dll")))
 
     def equip_plus_client(self) -> dict:
         """The client's Equip Plus: there at all, its DLL new enough for live physics (1.3.0), and
-        the physics and fit options of its WXLExtendedEquipment.ini."""
+        the physics and fit options of its WXLExtendedEquipment.ini. The x64 client's is built in
+        (``builtin``): Equip Plus 1.2's rows, no live physics and no INI."""
         root = self.client_root()
         folder = os.path.join(root, "Extensions", "wxl-equip-plus") if root else ""
         dll = os.path.join(folder, "wxl-equip-plus.dll")
         out = {"installed": bool(folder) and os.path.isfile(dll), "physics": False, "ini": os.path.join(folder, INI_NAME) if folder else "",
-               "options": {"physics": False, "pivots": False, "scale": False}}
+               "options": {"physics": False, "pivots": False, "scale": False}, "builtin": False}
+        if is_x64_client(root):
+            return out | {"installed": True, "builtin": True, "ini": ""}
         if out["installed"]:
             try:
                 with open(dll, "rb") as fh:
@@ -288,9 +306,9 @@ class Kit:
         """Equip Plus's live physics and fit options in the client's WXLExtendedEquipment.ini - those
         keys only, the rest of the file as it was (a copy of it kept the first time). True if changed."""
         ep = self.equip_plus_client()
-        if not ep["installed"]:
+        if not ep["installed"] or ep["builtin"]:
             return False
-        want = {("Physics", "Enabled"): physics, ("Fit", "RetargetPivots"): pivots, ("Fit", "RetargetScale"): scale}
+        want ={("Physics", "Enabled"): physics, ("Fit", "RetargetPivots"): pivots, ("Fit", "RetargetScale"): scale}
         if all(ep["options"][k] == v for k, v in zip(("physics", "pivots", "scale"), want.values())):
             return False
         path = ep["ini"]
@@ -343,6 +361,35 @@ class Kit:
             out.append("the kit needs Python 3.11 or newer")
         return out
 
+    def client_changed(self) -> bool:
+        """The project was made for another client than the one in Settings (the x64 client beside a
+        Wow.exe one, say): its bp.json names that client's Data folder."""
+        have = (self.project() or {}).get("client_data") or ""
+        return bool(have and self.cfg.client_data) and \
+            os.path.normcase(os.path.normpath(have)) != os.path.normcase(os.path.normpath(self.cfg.client_data))
+
+    def follow_client(self) -> bool:
+        """The project pointed at Settings' client (True when it was made for another one): its
+        bp.json names this client, and the other client's measurements (helm placement, body geosets)
+        go aside with a copy of its bp.json and scan.json, under backups\\client-<time>, so the kit
+        reads and measures this client before it builds for it."""
+        if not self.client_changed():
+            return False
+        work, prj = self.cfg.work, self.project()
+        aside = os.path.join(work, "backups", "client-" + time.strftime("%Y%m%d-%H%M%S"))
+        os.makedirs(aside, exist_ok=True)
+        for n in ("bp.json", os.path.join("client", "scan.json")):
+            if os.path.isfile(os.path.join(work, n)):
+                shutil.copy2(os.path.join(work, n), os.path.join(aside, os.path.basename(n)))
+        for n in KL.MEASUREMENTS:
+            if os.path.isfile(os.path.join(work, "client", n)):
+                shutil.move(os.path.join(work, "client", n), os.path.join(aside, n))
+        _save_json(os.path.join(work, "bp.json"), dict(prj, client_data=self.cfg.client_data))
+        self.say(f"The project was made for {prj.get('client_data')} - it follows the client in Settings now "
+                 f"({self.cfg.client_data}): the kit reads this client and measures its bodies again. The other "
+                 f"client's readings are kept in {aside}.")
+        return True
+
     def selected(self) -> dict | None:
         """The basket the kit's selection was made from - while the selection is still that one (the
         console helper may have selected something else since)."""
@@ -365,7 +412,8 @@ class Kit:
                  for s in ORDER]
         job = asdict(self.job) if self.job else None
         last = self.last_install()
-        built = basket is not None and self.selected_matches(basket, args) and all(led.get(s, {}).get("ok") for s in STEPS)
+        built = basket is not None and self.selected_matches(basket, args) and all(led.get(s, {}).get("ok") for s in STEPS) \
+            and not self.client_changed()
         packed = led.get("pack", {}).get("at", "").replace("-", "").replace(":", "").replace(" ", "-")
         return {"settings": asdict(self.cfg), "problems": self.problems(), "project": prj,
                 "retail_build": self.retail_build(), "local": self.local_ok(), "patch_name": self.patch_name(),
@@ -553,7 +601,10 @@ class Kit:
             if not self.create():
                 return False
             self.job.done.append("create")
-        if self.selected_matches(basket, args):
+        moved = self.follow_client()
+        if moved and not self.scan():
+            return False
+        if not moved and self.selected_matches(basket, args):
             self.say("The kit's selection is this basket already.")
         elif not self.select(basket, args):
             return False
@@ -699,12 +750,15 @@ class Kit:
             ep_patch = os.path.join(ep_root, sorted(fresh, key=lambda d: os.path.getmtime(os.path.join(ep_root, d)))[-1]) if fresh else None
         elif code is not None and code != 0:
             self.say("   (no Equip Plus pieces were made - see above; the kit's patch installs on its own)")
+        if ep_patch and c.armor_pieces:
+            EP.add(c.work, ep_patch, self.say)        # helms' and shoulders' collection parts (a hood)
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         backup = os.path.join(c.work, "backups", stamp)
         sel = self.selected()
         record = {"time": stamp, "client": [], "server": [], "added": [], "by": "retroport workbench",
-                  "basket": sel["basket"] if sel else None}          # what the patch holds, for the basket page
+                  "basket": sel["basket"] if sel else None,          # what the patch holds, for the basket page
+                  "data": c.client_data}                             # the client it went into (Undo puts back there)
         os.makedirs(os.path.join(backup, "client"), exist_ok=True)
 
         def place(src: str, name: str) -> None:
@@ -761,9 +815,10 @@ class Kit:
             self.say("!! close World of Warcraft first")
             return False
         backup, c = rec["backup"], self.cfg
+        data = rec.get("data") or c.client_data                      # older records: the one client there was
         for n in rec.get("client", []):
-            _remove_any(os.path.join(c.client_data, n))
-            _copy_any(os.path.join(backup, "client", n), os.path.join(c.client_data, n))
+            _remove_any(os.path.join(data, n))
+            _copy_any(os.path.join(backup, "client", n), os.path.join(data, n))
             self.say(f"   client: put back {n}")
         for p in rec.get("added", []):
             _remove_any(p)

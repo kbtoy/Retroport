@@ -114,9 +114,9 @@ def ask(text: str) -> bool:
 
 def should_end(wb: SV.Workbench, started: float, now: float, window_open: bool) -> bool:
     """The app's rule for ending (see the module doc)."""
-    if wb.quitting and not wb.kit.busy():
+    if wb.quitting and not wb.busy():
         return True
-    if wb.kit.busy() or window_open:
+    if wb.busy() or window_open:
         return False
     hello, bye = wb.last_hello, wb.last_bye
     if not hello:

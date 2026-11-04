@@ -15,6 +15,10 @@ server - in one click, with a backup of everything it changes and an Undo.
 - **See it in 3D** before you port it, animated, with its glows and moving textures: an item on its
   own, a set dressed on a character of any race your client plays (male or female), weapons and
   other one-kind sets one at a time with ◀ ▶. Every version is a click away under the preview.
+- **Mounts** - all of retail's mounts (about 1,700), ground and flying, each in 3D with its looks;
+  the mounts of one model in other skins are one card, every version a click away under the preview
+  like a set's; put them in the basket like items. In game each is a mount spell like the epic ones, the creature
+  you ride with retail's sounds and the item that teaches it, with retail's icon (see [Mounts](#mounts)).
 - **Collect** what you like in the **Basket** - what the next install adds to your game. It shows
   every look each entry brings and the entries that overlap, so a mistake is easy to spot and remove
   (with Undo). Below it: what's **in your game** from earlier installs (every install keeps it; *take
@@ -56,10 +60,12 @@ server - in one click, with a backup of everything it changes and an Undo.
   GitHub pages (see [Credits](#credits)).
 - **A 3.3.5a client** - a stock one works: it shows ported weapons, shields, helms, shoulders and
   every other slot's armor drawn on the body. *Optional:* the extra 3D pieces modern armor adds -
-  skirts, collars, boot shells, belt buckles, 3D capes - need
+  skirts, collars, hoods, boot shells, belt buckles, 3D capes - need
   [WarcraftXL](https://github.com/WarcraftXL/wxl-core) and
   [Equip Plus](https://github.com/TheDaveCalaz/wxl-equip-plus) in your client. Install adds them when
   your client has Equip Plus, and leaves them out when it doesn't (Settings can turn them on or off).
+  The x64 3.3.5 client (`WowClient64.exe`) works too, and draws those pieces itself - or takes
+  retail's own items as they are (see [Retail direct](#retail-direct-the-x64-client)).
 - **Optionally, an AzerothCore server** whose dbc folder you point it at, so the new items exist on
   the server too.
 
@@ -72,6 +78,8 @@ server - in one click, with a backup of everything it changes and an Undo.
   [WoWDBDefs](https://github.com/wowdev/WoWDBDefs) definitions folder and the
   [community listfile](https://github.com/wowdev/wow-listfile)). The bodies the character view
   dresses come from BfA 8.3.7, the same way.
+- **How Install puts items in** - the *backport kit* (the default: each look converted for any 3.3.5a
+  client) or *retail direct* (retail's own items into the x64 client - see below).
 - **Backport kit** - the project folder the conversion works in (a folder of its own: the kit fills
   it with its files). The kit and Equip Plus's tools are always the app's own copies, downloaded by
   the first Install at the versions this release is tested with - the same for everyone. Equip
@@ -120,6 +128,78 @@ Install writes each piece's physics data with Equip Plus 1.3.0's tools, and Sett
 (*Live physics*, saved in your client's `WXLExtendedEquipment.ini` - also in Equip Plus's F9 panel in
 game) next to its *better fit* options. Your client needs Equip Plus 1.3.0 or newer.
 
+## Retail direct (the x64 client)
+
+The x64 3.3.5 client draws retail's items itself, from retail's own tables and files. With
+Settings > *How Install puts items in* > **Retail direct**, Install converts nothing:
+
+1. It reads retail's item tables from your own retail install (Settings > *Where the items come
+   from* > *My own install*) and checks each is the layout the client reads.
+2. It works out every file the basket's looks name - the models for every race and sex, their
+   skins and textures, the body textures, the icons - and puts them, the item tables and the
+   client's file-id tables (with the new files added) into `Data\patch-T.MPQ`. Where the client
+   looks for a file somewhere else than retail keeps it (a helm's texture kept with its set's other
+   pieces), the patch has it there too; a check then looks up every file the client will open, as
+   the client does.
+3. It writes the item SQL (`retail-direct-items.sql` - a `SOURCE` line with a copy button): one
+   row per look, its display retail's own. An item's default look keeps its retail item id; its
+   other looks get (version + 1) x 1,000,000 + the id - the Mythic skull of the Damned Necrolyte
+   is 4271546. The SQL only replaces rows retail direct made itself: an id your database already
+   uses for something else stops it with "Duplicate entry".
+4. It installs the patch (the one it replaces is backed up; Undo puts it back) and clears the
+   client's cache. The server's dbc folder is left alone.
+
+There are no measurements, audit or Equip Plus pieces - nothing is converted - and the Stats step
+applies as usual (its item sets are the kit's only). These items show retail's looks only in the
+x64 client: a 32-bit client shows them without a model. Install again after `patch-R.MPQ` is made
+again: the patch carries a copy of the client's file-id tables. Retail direct keeps its own
+install, history and Undo (in `%USERPROFILE%\.retroport\workbench\direct`), apart from the kit's.
+
+## Mounts
+
+The **Mounts** page lists retail's mounts with their source (drop, vendor, achievement...) and shows
+each one in 3D - a mount with several looks has a chip for each, and the one picked is the one you
+ride. Mounts that are one model in other skins - the ten riding cranes, the drakes, the Qiraji
+battle tanks - are one card ("10 versions"), like a set's versions: a chip under the preview for
+each (Azure, Golden, Regal...), and **Add all 10 versions** puts every one in the basket. Each
+version is a mount of its own in game. In the basket a mount is an entry of its own; Install makes it
+with either way in:
+
+- **Backport kit**: each model converted for any 3.3.5a client (its skins, animations and textures
+  with it), in a patch of its own, `Data\patch-M.MPQ`.
+- **Retail direct**: retail's own models (the x64 client converts them as it loads them), in the
+  route's `patch-T.MPQ`.
+
+Either way every model and skin goes under `Creature\Retroport\` - an old horse or drake keeps its
+3.3.5 model for the NPCs that use it - and each mount becomes:
+
+- a **spell** like the epic mounts (ground 100%; flying 280% where flying is allowed, 100% on the
+  ground) with retail's icon, in the spellbook's Mounts tab;
+- the **creature** you sit on (`creature_template`, its display and model) with **retail's sounds**:
+  its footsteps on each kind of ground, wing flaps, jumps, snorts and calls - retail's own `.ogg`
+  files at retail's paths (3.3.5 plays Ogg; it never had those files, so nothing of yours is
+  replaced). While you ride, you sound like the mount;
+- the **item that teaches it**, with retail's name and **retail's icon** in your bags: Riding 150 and
+  level 40 for a ground mount, Riding 300 and level 70 for a flying one.
+
+The client's tables are in the patch; the server's rows are in the SQL Install shows
+(`retroport-mounts.sql` / `retail-direct-mounts.sql`: AzerothCore's `spell_dbc`,
+`creaturedisplayinfo_dbc`, `creaturemodeldata_dbc`, `creature_template`, `item_template`). It ends
+with `.learn` and `.additem` lines for a GM. A mount keeps its spell, creature and item numbers from
+install to install (`%USERPROFILE%\.retroport\workbench\mount-ids.json`), so players keep the
+mounts they learned. Mounts are made from your own retail install (Settings > *Where the items come
+from* > *My own install*).
+
+The mounts' patch holds whole copies of the client's spell, creature and sound tables, made from
+what's under it. If another patch under it changes them afterwards - a race package installed again
+into `patch-H.MPQ` - the Backport page says so: Install again, or that patch's new rows stay hidden.
+
+The items' bag icons are rows of the client's item display table, which the item kit's own patch
+holds above the mounts' (`patch-Y.MPQ`, say). So Install adds those rows to that patch - as the
+Stats step adds item sets - backing it up first when the same install didn't just put it there;
+Undo puts it back. If another install replaces that patch later, the Backport page says the icons
+went with it: Install again.
+
 ## Troubleshooting
 
 - **The window doesn't appear.** Look at `%USERPROFILE%\.retroport\workbench\workbench.log`. Without
@@ -151,9 +231,29 @@ game) next to its *better fit* options. Your client needs Equip Plus 1.3.0 or ne
   your bags kept them; and a new project could give their numbers to other items. Put those sets in
   the basket again and Install: the Workbench now remembers every number any of your projects gave
   and gives a returning look its old numbers, so the items you carry show again.
+- **A helm shows its mask but not its hood** (the Damned Necrolyte skull) - earlier versions left out
+  a helm's part of its set's shared body model. Update, put the set in the basket again and Install
+  (with Equip Plus in your client, or the x64 client).
+- **Switched to another client** - Settings' client folder is the one Install builds for: the next
+  Install reads the new client and measures its bodies again (a few minutes), and Undo always puts
+  files back into the client that install went into.
 - **Items are level 1 with no stats** - the conversion makes cosmetic copies; give them stats in
   **Stats** and Install again (the Backport page says how many pieces still have none).
 - **No 3D preview** - the preview needs WebGL 2; update your graphics driver.
+- **A mount's tables are hidden by patch-X** - an archive above the mounts' patch holds the
+  client's spell, creature or sound tables, so the mounts' rows would never show; Install stops and
+  names it.
+- **A mount's item shows a red question mark** - its icon row was in a patch another install
+  replaced since (the Backport page says which): Install again.
+- **A mount is quieter than in retail** - 3.3.5 plays up to 10 files per sound (retail's footsteps
+  have up to 20, the first 10 are kept), and a sound whose files your retail install keeps encrypted
+  is left out.
+- **A mount stands still or slides** - the converter keeps retail's animations; 3.3.5 plays ids up to
+  505 only, and a model whose walk or run uses a newer id doesn't animate there (it still carries you).
+- **Retail direct: "this client and retail build don't go together"** - your retail install
+  updated and changed an item table's layout; the x64 client reads the one it was built for.
+- **Retail direct: "display ... is a row of your client's ItemDisplayInfo.dbc"** - 3.3.5 or the
+  kit already uses that number, and the client draws its row instead of retail's look.
 
 ## Building from source
 

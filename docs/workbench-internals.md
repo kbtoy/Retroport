@@ -31,6 +31,17 @@ has finished; started again while it runs, it opens another window on it. Its lo
   each is a wrapper around the kit's own function, and each a fix to offer the kit's author:
   * open-folder patches: WarcraftXL clients mount a FOLDER named like an archive
     (`Data\patch-H.MPQ\...`, as Equip Plus installs its pieces); the kit's client reader is shown them;
+  * a model the client holds as retail's (MD21) over a 3.3.5 (MD20) copy is read as the 3.3.5 one:
+    the x64 client mounts retail bodies (its patch-R) over the 3.3.5 ones, and the kit, which reads
+    only MD20 bodies, found no Kul Tiran or Pandaren body there - while the client places a 3.3.5
+    helm by the 3.3.5 body beneath anyway (its helmet lift);
+  * its export of retail's 3D pieces (`build --extension`) leaves helms out - their own model is the
+    3.3.5 row's - and with them the part some helms wear of the set's shared body model (the Damned
+    Necrolyte skull's hood, group 27). The kit's own export runs once more on just those parts
+    (shown as slot `head_collection`, filtered by the head's groups), and after Equip Plus's
+    converter (which only knows the body slots) `eprows.add` gives its patch the rows: the hood on
+    attachment 19 and the helm's own model as its 3.3.5 row has it (Equip Plus draws only the rows of
+    a display that has any);
   * cached tables an older kitlocal wrote with an `ID` column wago's don't have (ModelFileData,
     TextureFileData - newtech called the column new retail technology) are put right;
   * a sequence a model calls external but keys nothing for is made resident, and a model gets only
@@ -166,7 +177,10 @@ install fetches what it doesn't store from Blizzard's CDN, verified and kept in 
   models hang on body points (helm 11, shoulders 6/5, buckle 53...); ModelType 1 *collections* are
   skinned to the body's bones by bone name hash - one collection is shared by many items, and each
   shows only the parts of the body groups its slot controls (at 1 + its AttachmentGeosetGroup
-  value). A piece opens on its own with a Back button.
+  value). A model of its own (a helm, shoulders) shows its slot's groups at 1 + the higher of its
+  AttachmentGeosetGroup and the display's GeosetGroupOverride - the Heroic and Mythic tier looks'
+  bigger x02 parts (the Damned Necrolyte skull's flame wings), as the kit builds them - and the rest
+  of its geosets. A piece opens on its own with a Back button.
 - **Backport**: one **Install** puts the basket into the client and the server - it fetches the kit
   and Equip Plus the first time, creates the kit's project if there's none, has the kit `select` the
   basket when it changed since the last selection
@@ -262,3 +276,181 @@ writes into the Equip Plus patch from the kit's `.phys` data. So the converter I
 is the client's: `[Physics] Enabled` and `[Fit] RetargetPivots` / `RetargetScale` in
 `Extensions\wxl-equip-plus\WXLExtendedEquipment.ini`, which Settings changes in place
 (`Kit.set_equip_plus_options`: those keys only, a copy of the file kept the first time).
+
+## The x64 client
+
+A client folder with `WowClient64.exe` (the x64 3.3.5 client built from wowdecomp-dx11) is a
+client like a `Wow.exe` one: Settings names it, *close World of Warcraft* waits for either exe, and
+Install puts the same patches in its `Data`. Its Equip Plus is built in - it reads Equip Plus 1.2's
+`WXLItemDisplayModels.csv` rows itself (`WXL/modules/equipment/EquipPlus.cpp`), with no INI and no
+live physics yet - so `equip_plus_client()` says `builtin` and the pieces are made for it.
+
+That client's `Data` may be hard links to another client's archives: Install removes an archive
+before copying the new one in (and Undo the same), so the other client keeps its own.
+
+The kit's project remembers its client (`bp.json` `client_data`). When Settings names another one,
+the next Install points the project at it (`Kit.follow_client`): the other client's measurements
+(`client\helm_shift.json`, `geoset_map.json`) move to `backups\client-<time>\` with copies of its
+`bp.json` and `scan.json`, and the kit scans, selects and measures again for this client. Each
+install record names the client it went into (`data`), and Undo puts its files back there.
+
+The x64 client can also draw retail's items from retail's own tables and files: that is the second
+install route, *retail direct*, below.
+
+## Retail direct
+
+Settings' `route` (`workbench.json`; "" = the kit, "direct") picks what Install runs:
+`Workbench.runner()` is the kit or `direct.Direct`, and the Backport page, the history
+(`basket-history-direct.json`), what's in the game, take-outs and Undo follow it - each route keeps
+its own installs. `retailpack` is the pure part (the client's rules, the walk, the tables, the SQL,
+the patch writer), `direct` the job.
+
+What the x64 client reads (wowdecomp-dx11-next, read-only reference): `WXL/modules/db2/items`
+loads retail's `item`, `itemappearance`, `itemmodifiedappearance`, `itemdisplayinfo`,
+`itemdisplayinfomaterialres`, `itemdisplayinfomodelmatres`, `modelfiledata`, `texturefiledata`,
+`componentmodelfiledata`, `componenttexturefiledata`, `helmetgeosetdata` and `helmetanimscaling`
+(`RetailSchemas.hpp`; `retailpack.TABLES` holds their layout hashes - 12.1.5's) and turns each
+FileDataID into a path with `DBFilesClient\ModelFilePath.db2` / `TextureFilePath.db2`
+(`FdidCompat.cpp`; WDC1, inline id + string offset - patch-R's, written by retroport-native's
+`x64_retail_pack.py`). A display id its ItemDisplayInfo.dbc has is drawn from that row instead
+(`ItemGraphOwnsDisplay`). Item rows missing from Item.dbc come from retail's item.db2 with the
+item's default look (modifier 0 first, then OrderIndex); the server's item query wins for the
+display (`VisibleItem_C::GetDisplayID`). `modules/equipment/EquipmentAttachments.cpp` draws the
+models: it opens `Item\ObjectComponents\<folder>\<name>.m2` (folder = the one after
+objectcomponents, name = after `collections\` or the file's name), a model's own texture
+(ModelMaterialResourcesID, the first TextureFileData row) by its name *in the model's folder*, and
+material textures (body layers, ModelMatRes) at their full paths.
+
+Install (`Direct.go`):
+
+1. **read** - the twelve tables from the local install (`Source.raw_table`, encrypted sections
+   zeroed), each layout checked; eight read into rows.
+2. **collect** - one `Piece` per (retail item, display) of the plan; its entry
+   (`retailpack.entry_for`): the item id for its default look unless the client's Item.dbc has it,
+   else (modifier + 1) x 1,000,000 + id, past modifier 14 numbered from 16,000,000 (`ids.json`
+   `spare`). Files: each display's models (every race and sex), its textures, each model's
+   companions (SFID/TXID/BFID/SKID/PFID/RPID/GPID, recursively) and the looks' icons; names from
+   the listfile, unnamed ones beside their model as `wxl_<fdid>`, a display model outside
+   objectcomponents moved to `objectcomponents\wxl\` (the client can't reach it otherwise). A
+   FileDataID the client's path tables already have keeps that path, and isn't shipped when the
+   client holds the file. Aliases: a model where the client looks for it (a sub-folder), a model's
+   texture beside it (`alias_for` - one look in nine needs one; the Damned Necrolyte skull's lives
+   in collections\). A display the client's ItemDisplayInfo.dbc has is reported.
+3. **pack** - `out\patch-T.MPQ` (stored, written as it goes; an alias shares its file's block): a
+   manifest (`retroport\direct.json` - Install replaces only a patch-T that has one), the tables,
+   the path tables (the client's, read with patch-T set aside, plus the new rows), the files, the
+   aliases. Then `check`: every path `retailpack.lookups` says the client opens, looked for in the
+   patch and the client.
+4. **sql** - `out\sql\retail-direct-items.sql`: `DELETE ... WHERE (entry, displayid) IN` the pairs
+   this route ever wrote (`ids.json` `owned`), then one INSERT in the kit's format (so
+   `itemstats.kit_items` reads it) - the label of a non-default look ("Mythic") as its description
+   - then `itemstats.updates` for each piece (no item sets: those need ItemSet.dbc rows).
+5. **install** - `Data\patch-T.MPQ` replaced (removed first: hard links), the old one in
+   `direct\backups\<time>\client\`, the record in `install.json` (the kit's format), Cache cleared.
+
+`out\build.json` records what was built (looks, build, client, steps, entries, a summary); the
+page calls it built while those match the basket. Retail's ItemVisual glows aren't shipped (the
+client sets them to 0 for retail rows).
+
+## Mounts
+
+`mounts` is the pure part (the catalog, 3.3.5's rules, the client rows, the SQL), `mountpack` the
+job both routes call (`build`), the kit route's patch (`write_patch`, `place`) and the staleness
+check (`stale`).
+
+**Catalog** (`mounts-<source>-<build>-v2.json.gz` in the cache, read after the item catalog): every
+Mount with a display (MountXDisplay -> CreatureDisplayInfo -> CreatureModelData), its kind ("flying"
+when any MountCapability of its MountTypeXCapability rows has Flags & 2), icon (SpellMisc of its
+SourceSpellID, difficulty 0), source (SourceTypeEnum), the item that teaches it (ItemXItemEffect ->
+ItemEffect TriggerType 6 with that spell; named by ItemSearchName) and per display: model,
+TextureVariationFileDataID (4 - 3.3.5 has 3), scale, alpha, CreatureDisplayInfoGeosetData pairs and
+the model data the rows copy (scale, collision, MountHeight, GeoBox, effect scales, missile collision)
+and its CreatureSoundData row (CreatureDisplayInfo.SoundID, else its model's). `sounds`
+(`mounts.sound_bundle`) keeps what those rows need: each row's kits by 3.3.5 column
+(`race.sounds.CSD_KIT_COLUMNS`) and its SoundFootstepID, each footstep's FootstepTerrainLookup rows
+(terrain, kit, splash kit), each kit's SoundKit values and SoundKitEntry files (FileDataID,
+frequency). The page's preview draws the model with textures 11/12/13 and the geosets the packed data shows.
+
+**Families** (`mounts.model_families`, worked out when the catalog loads - nothing cached): the
+mounts whose first display has one model, rooted at the oldest (lowest Mount id); a mount with no
+model is alone. `MountCatalog.search` gives one card per family - its oldest mount that matches -
+with `root` and `versions`; `detail` gives `family`, each with its chip label (`mounts.version_labels`:
+the name without the words every version's has, else the whole name; a repeat numbered).
+Placeholders ("[PH] ...") count only with the page's test-mounts box, or when it is the mount opened.
+
+**A basket entry** is `{"kind": "mount", "source", "id", "display", "mount_kind", ...}`;
+`catalog.plan_basket` gives it no looks and a `mount` field, `kit.basket_args` ignores it and
+`Workbench.kit_basket` leaves it out (the kit never selects a mount).
+
+**3.3.5 rows** (`mounts.client_tables`, from the client as the route's patch finds it):
+
+- Spell - a copy of 23229 (ground) or 32242 (flying) with the mount's id, EffectMiscValue_1 = its
+  creature, its icon (a SpellIcon row of the retail icon, or the stock row of the same name), name
+  and description; SkillLineAbility - a copy of the stock row in skill line 777;
+- CreatureDisplayInfo - model data id, retail scale and alpha, TextureVariation names, packed
+  CreatureGeosetData (nibble per group 1-8: `(GeosetIndex + 1) * 100 + GeosetValue`, 0 none);
+- CreatureModelData - the stock row of the same model stem (an old mount), else the kind's
+  (RidingHorse / DrakeMount) for footprints and blood, with retail's size fields and
+  ModelName `creature\retroport\...\<stem>.mdx`;
+- sounds (`mountpack._sounds`) - a SoundEntries row per retail kit (`race.sounds.Kit`: retail's
+  SoundType, volume, flags, distances, EAXDef; up to 10 files, the ones that read as Ogg, under one
+  folder - a kit spread over several gets `sound\retroport\<kit>\`); a CreatureSoundData row with the
+  mount's id - the template model's row (impact type, fidget delays) with every sound column
+  retail's or 0 - named by both CreatureDisplayInfo.SoundID and CreatureModelData.SoundID (the
+  client takes the display's, then the model's; a mounted player's sounds are the mount's); its
+  SoundFootstepID retail's when 3.3.5's FootstepTerrainLookup has it or gets it: a footstep it lacks
+  gets retail's rows for terrains 0..TerrainTypeSounds' highest id (the client sizes its array by
+  that - a higher one would write past it), else the template's. The converter keeps the model's
+  events ($FL0/$FR0 footfalls, $FSD, $WNG, $FD1-5), which play those columns;
+- ItemDisplayInfo - the item's own row (`mounts.with_item_displays`): the stock mount item's
+  (ITEM_ICONS - its GroupSoundIndex) showing retail's icon. The icon file goes in the patch unless
+  the client under it has one of that name.
+
+One number per mount from 250000 is its spell, display, model data, sound data, SkillLineAbility row
+and creature (`mounts.allocate`: the first no client table and no other mount uses); its item entry
+from 990000, reserved in `item-ids.json` so a kit project never gives it to an item. `<data>\mount-ids.json`
+also keeps the item's ItemDisplayInfo id (`display`), SpellIcon ids, SoundEntries ids per retail kit
+(`sounds`), FootstepTerrainLookup ids per footstep and terrain (`footsteps`) - a row with one of them
+in the base is an earlier install's and goes (`mounts.owned_ids`) - and `owned`, the (id, marker)
+pairs the SQL wrote, deleted first next time.
+
+**SQL** (`mounts.mount_sql`): the rows read back from the client tables just made - spell_dbc (all
+234 columns in Spell.dbc's order; the schema's float columns as floats), creaturedisplayinfo_dbc,
+creaturemodeldata_dbc - then creature_template (+ creature_template_model, creature_model_info) and
+item_template (class 15/5, spell 483 then the mount spell with trigger 6, Riding 150/300, its own
+ItemDisplayInfo row - or a stock mount item's when retail gives it no icon). The server reads no
+sound or item display rows (AzerothCore loads ItemDisplayInfo but never looks a display up). Kit route:
+`<work>\out\sql\retroport-mounts.sql` (the install record's `mounts_sql`, listed by `Kit.sql_files`);
+direct: `<data>\direct\out\sql\retail-direct-mounts.sql`.
+
+**Files**: models and skins under `creature\retroport\` (`mounts.relocate`); sounds at retail's
+listfile paths (`.ogg`: 3.3.5 has none) - a nameless one `sound\retroport\<fdid>.ogg` - as FileDataIDs
+both routes copy (direct marks them "sound": no path-table rows). Kit route: `converted` runs
+`convert.engine.convert_with_wotlkconv` from the CASC install (kept in
+`<data>\mounts\converted\<build>-v1\<fdid>\`), then bakes each type-0 texture's relocated path into the
+MD20 and converts the textures, the display's skins and a new icon with `eprows.client_blp`. Direct:
+the model and everything it names (SFID/TXID/AFID/BFID/SKID/SKPD/PFID/RPID/GPID, recursively) at their
+relocated listfile paths as path-table rows - the x64 client finds skins, animations and skeletons by
+name beside the model - and the display's skins under their TextureVariation names.
+
+**Patches**: the kit route writes `<data>\mounts\kit\patch-M.MPQ` (manifest `retroport\mounts.json`)
+before the kit runs; the kit's `installed` hook (`Workbench._mounts_installed`) places it - or takes the
+old one out when the game has no mounts - in the install's record, so the kit's Undo covers it; a
+basket of mounts only skips the kit (`_mounts_alone` writes the record itself). The direct route adds
+the files, path rows and tables to its `patch-T.MPQ`. `build` stops when an archive above the patch
+(by name rank, whether or not the patch is there yet) holds one of `mounts.TABLES`. The status
+compares the basket's mounts with the last install's `mounts`, and `mountpack.stale` names a lower
+archive holding a table that is newer than the installed patch (a race package installed again; the
+item display table only while no archive above holds one).
+
+**The items' rows** (`mountpack.place_item_rows`, after the route's patches are in): the patch
+carries ItemDisplayInfo too, but the item kit's patch holds it above (both test clients: patch-Y).
+The rows go into the archive the client reads it from when that outranks the patch - a packed
+`Data\patch-<x>.MPQ` (a folder or another archive can't take them: `build` then gives the items a
+stock icon) - with every row of the registry's display ids replaced. The archive is backed up into the
+install's record unless the same install placed it (the kit's own record covers it), then copied,
+the copy given the table (`mpq.add_files`) and put in place of the original (a hard link's other
+client keeps its own). The record keeps `item_rows` (archive -> size and mtime) and `item_ids`:
+`mountpack.item_rows_gone` tells the page when the archive changed since and lost the rows, and the
+direct route's Undo leaves an archive that changed since as it is. Kit route: `Workbench._mounts_installed`
+(after the item sets); direct: `Direct.install`.

@@ -12,12 +12,14 @@ API (GET unless noted):
   /api/item?source=&id=
   /api/sets?source=&q=&expansion=&cls=&armour=&kind=transmog|itemset&page=
   /api/set?source=&id=&kind=
+  /api/mounts?source=&q=&kind=&page=        retail's mounts; /api/mount?source=&id= one; /api/mount/preview?source=&display=
   /api/basket                    GET the basket; POST replaces it
   /api/basket/plan               what installing it builds: each entry's looks, overlaps, changes
   /api/basket/leave-out          POST {display, out}: a piece left out of the entries that have it (or put back)
   /api/basket/take-out           POST {key, out}: something in the game taken out by the next install (or kept)
   /api/kit/open-sheets           POST: the kit's preview pictures folder opened in Explorer
-  /api/kit                       the kit project's state; POST /api/kit/run {action: go|build|rerun|undo|stop...}
+  /api/kit                       the install route's state (the kit's, or retail direct's when Settings chose it);
+                                 POST /api/kit/run {action: go|build|rerun|undo|stop...}
   /api/settings                  GET the Settings view; POST saves it (a changed source is read again)
   POST /api/pick {folder, title, start}   Windows' folder/file picker on this machine -> {path}
   /api/races                     the races the 3.3.5 client plays (the character view's choices)
@@ -46,9 +48,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import catalog as C
 from . import character as CH
+from . import direct as DR
 from . import kit as K
 from . import itemstats as IS
 from . import models as M
+from . import mountpack as MP
+from . import mounts as MT
 from . import pick as P
 from . import wotlk as WK
 
@@ -107,6 +112,7 @@ class Settings:
     listfile: str = ""                                      # the community listfile (local installs)
     data: str = ""                                          # cache + basket
     kit: dict = field(default_factory=dict)                 # kit.KitSettings over the Backport Helper's
+    route: str = ""                                         # how Install puts items in: "" the kit, "direct" retail direct
 
     @classmethod
     def load(cls, path: str = SETTINGS_PATH) -> "Settings":
@@ -169,6 +175,7 @@ class Workbench:
         self.settings = settings
         self.sources: dict[str, object] = {}            # the sources whose items are browsed
         self.catalogs: dict[str, C.Catalog] = {}
+        self.mount_catalogs: dict[str, MT.MountCatalog] = {}
         self.state: dict[str, str] = {}
         self.log: list[str] = []
         self.in_client: set[int] = set()
@@ -181,6 +188,7 @@ class Workbench:
         self.bodies: CH.Bodies | None = None
         self.basket_path = os.path.join(settings.data_dir, "basket.json")
         self._lock = threading.Lock()
+        self._basket_lock = threading.Lock()
         self._loading = threading.Lock()
         self.last_hello = self.last_bye = 0.0         # the page's comings and goings (app.py)
         self.quitting = False                         # another copy of the app asked this one to stop
@@ -189,7 +197,12 @@ class Workbench:
             settings.kit = values
             settings.save()
         self.kit = K.Kit(settings.kit, None, settings.dbd, settings.listfile, settings.data_dir, save_kit)
-        self.kit.hooks = {"tables": self._stats_tables, "built": self._stats_built, "installed": self._stats_installed}
+        self.kit.hooks = {"tables": self._stats_tables, "built": self._stats_built, "installed": self._installed}
+        self.direct = DR.Direct(settings.data_dir, settings.listfile)
+        self.direct.mount_catalog = lambda: self.mount_catalogs.get("retail")
+        self._job_items: list = []                   # what the kit route's running install builds (mounts too)
+        self._mount_patch: str | None = None         # the mounts' patch that install puts in
+        self._mount_built = None                     # and what made it (mountpack.Built: the items' rows)
         self._reference: dict | None = None
         self._client_options: dict | None = None
         self._options_lock = threading.Lock()
@@ -202,7 +215,7 @@ class Workbench:
         specs = {sp.key: sp for sp in st.effective_sources()}
         for key in list(self._specs):
             if specs.get(key) != self._specs[key]:
-                for d in (self.sources, self.catalogs, self._displays, self.state, self._race_names):
+                for d in (self.sources, self.catalogs, self.mount_catalogs, self._displays, self.state, self._race_names):
                     d.pop(key, None)
         readers = {}
         for key, sp in specs.items():
@@ -222,6 +235,15 @@ class Workbench:
         retail = specs.get("retail")
         self.kit.retail = asdict(retail) if retail and retail.kind == "local" else None
         self.kit.dbd, self.kit.listfile = st.dbd, st.listfile
+        self.direct.client, self.direct.listfile = st.client, st.listfile
+        self.direct.source = readers.get("retail") if retail and retail.kind == "local" else None
+
+    def runner(self):
+        """What Install runs: the kit, or retail direct (Settings' route)."""
+        return self.direct if self.settings.route == "direct" else self.kit
+
+    def busy(self) -> bool:
+        return self.kit.busy() or self.direct.busy()
 
     def say(self, msg: str) -> None:
         with self._lock:
@@ -273,6 +295,15 @@ class Workbench:
                     self.displays(key)
                 except Exception as e:
                     self.say(f"{self.sources[key].spec.label} previews: {e}")
+            for key in list(self.catalogs):              # the source's mounts (the Mounts page)
+                if key in self.mount_catalogs or key not in self.sources:
+                    continue
+                try:
+                    cat = MT.load_catalog(self.sources[key], self.say)
+                    self.mount_catalogs[key] = cat
+                    self.say(f"{self.sources[key].spec.label} {cat.build}: {len(cat.mounts)} mounts")
+                except Exception as e:
+                    self.say(f"{self.sources[key].spec.label} mounts: {e}")
             try:                                          # the Stats step's numbers, ready before they're asked for
                 self.client_options()
             except Exception as e:
@@ -311,8 +342,11 @@ class Workbench:
         catalog knows of each (slot, class and subclass, quality) and its in-game entry once built.
         (Something in the game gets its stats changed by putting it in the basket again.)"""
         plan = C.plan_basket(self.catalogs, self.basket())
-        ids = K._load_json(os.path.join(self.kit.cfg.work, "ids.json"), {}) if self.kit.cfg.work else {}
-        entries = {str(k): v for k, v in ((ids or {}).get("item") or {}).items()}
+        if self.runner() is self.direct:
+            entries = {str(k): v for k, v in (self.direct.built_record().get("entries") or {}).items()}
+        else:
+            ids = K._load_json(os.path.join(self.kit.cfg.work, "ids.json"), {}) if self.kit.cfg.work else {}
+            entries = {str(k): v for k, v in ((ids or {}).get("item") or {}).items()}
         pieces, seen = [], {}
         for e in plan["entries"]:
             cat = self.catalogs.get(e.get("source") or "")
@@ -377,6 +411,84 @@ class Workbench:
             kit.say(f"!! the Stats step: {type(e).__name__}: {e}")
             return False
 
+    def _installed(self, kit, record: dict, backup: str) -> None:
+        """Right after the kit's patches are in the client: the item sets (Stats), the mounts' patch."""
+        self._stats_installed(kit, record, backup)
+        self._mounts_installed(kit, record, backup)
+
+    def _mounts_installed(self, kit, record: dict, backup: str) -> None:
+        """The kit route's mounts' patch into the client (or the one there taken out when the game
+        has no mounts now), in the install's record so Undo puts it back; the record's basket is
+        everything the install put in, mounts too."""
+        try:
+            MP.place(self._mount_patch, kit.cfg.client_data, backup, record, kit.say)
+            if self._mount_patch and self._mount_built is not None:
+                MP.place_item_rows(kit.client_root(), MP.KIT_PATCH, self._mount_built.rides,
+                                   self._mount_built.item_ids, backup, record, kit.say)
+        except Exception as e:                      # the install's record is still saved: Undo works
+            traceback.print_exc()
+            kit.say(f"!! the mounts: {type(e).__name__}: {e}")
+        record["basket"] = list(self._job_items) or record.get("basket")
+        record["mounts"] = sorted(C.entry_key(e) for e in MT.basket_mounts(self._job_items))
+        sql = os.path.join(kit.cfg.work, "out", "sql", MP.KIT_SQL)
+        if record["mounts"] and os.path.isfile(sql):
+            record["mounts_sql"] = sql
+
+    def _build_mounts(self, kit, rides: list) -> bool:
+        """The kit route's mounts made (``self._mount_patch``), before anything is installed."""
+        self._mount_patch = self._mount_built = None
+        if not rides:
+            return True
+        kit.job.step = "mounts"
+        src = self.sources.get("retail")
+        if src is None or src.spec.kind != "local":
+            kit.say("!! mounts are made from your own retail install: set Retail items to \"My own install\" in Settings")
+            return False
+        cat = self.mount_catalogs.get("retail")
+        if cat is None:
+            kit.say("!! retail's mounts are still loading - try again in a minute")
+            return False
+        kit.say(f"Making {len(rides)} mount(s) for any 3.3.5a client (converted)")
+        built = MP.build(rides, cat, src, self.settings.client, "kit", MP.KIT_PATCH, self.settings.data_dir,
+                         self.settings.listfile, kit.say)
+        folder = os.path.join(self.settings.data_dir, "mounts", "kit")
+        os.makedirs(folder, exist_ok=True)
+        patch = os.path.join(folder, MP.KIT_PATCH)
+        n = MP.write_patch(patch, built, src, {"by": "Retroport Workbench (mounts, kit route)",
+                                               "time": time.strftime("%Y%m%d-%H%M%S"), "build": cat.build,
+                                               "mounts": [r.mount for r in built.rides]})
+        sql = os.path.join(kit.cfg.work, "out", "sql", MP.KIT_SQL)
+        os.makedirs(os.path.dirname(sql), exist_ok=True)
+        with open(sql + ".part", "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(built.sql)
+        os.replace(sql + ".part", sql)
+        kit.say(f"   wrote {patch} ({os.path.getsize(patch) / 1048576:.1f} MB, {n} files) and {sql}")
+        self._mount_patch, self._mount_built = patch, built
+        kit.job.done.append("mounts")
+        return True
+
+    def _mounts_alone(self, kit, items: list) -> bool:
+        """An install of mounts only (the kit has nothing to build): the mounts' patch in, recorded in
+        the kit's backups like its own installs - its Undo takes it out."""
+        kit.job.step = "install"
+        if K.wow_running():
+            kit.say("!! close World of Warcraft first")
+            return False
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = os.path.join(kit.cfg.work, "backups", stamp)
+        os.makedirs(backup, exist_ok=True)
+        record = {"time": stamp, "client": [], "server": [], "added": [], "by": "retroport workbench (mounts)",
+                  "basket": items, "data": kit.cfg.client_data}
+        self._mounts_installed(kit, record, backup)
+        cache = os.path.join(os.path.dirname(kit.cfg.client_data.rstrip("\\/")), "Cache")
+        if os.path.isdir(cache):
+            shutil.rmtree(cache, ignore_errors=True)
+            kit.say("   cleared the client's Cache folder")
+        K._save_json(os.path.join(backup, "install.json"), record)
+        kit.job.done.append("install")
+        kit.say("Installed. Apply the mounts' SQL to your world database, restart the worldserver, then log in.")
+        return True
+
     def _stats_installed(self, kit, record: dict, backup: str) -> None:
         """Item sets: their rows in the client's ItemSet table (inside the kit's patch, just placed)
         and in the server's (backed up first)."""
@@ -430,8 +542,10 @@ class Workbench:
             got = self.stats_pieces()
             edits = got["edits"]
             without = [p["name"] for p in got["pieces"] if not IS.touched(edits, p["display"])]
+            direct = self.runner() is self.direct
             return {"stats": {"pieces": len(got["pieces"]), "without": len(without), "names": without[:6]},
-                    "foreign": len(self.foreign_looks()), "audit": self.kit.audit_notes()}
+                    "foreign": 0 if direct else len(self.foreign_looks()),
+                    "audit": {"warnings": [], "fails": []} if direct else self.kit.audit_notes()}
         except Exception as e:
             return {"stats": {"pieces": 0, "without": 0, "names": [], "error": str(e)}, "foreign": 0,
                     "audit": {"warnings": [], "fails": []}}
@@ -441,10 +555,11 @@ class Workbench:
     # record) - minus what's taken out - and the basket empties: what it held is in the game now.
     def in_game(self) -> list:
         """The entries the last install put in the game."""
-        return list((self.kit.last_install() or {}).get("basket") or [])
+        return list((self.runner().last_install() or {}).get("basket") or [])
 
     def _take_out_path(self) -> str:
-        return os.path.join(self.kit.cfg.work, "workbench-take-out.json") if self.kit.cfg.work else ""
+        work = self.runner().cfg.work
+        return os.path.join(work, "workbench-take-out.json") if work else ""
 
     def take_out(self) -> list[str]:
         """The keys of entries in the game the next install takes out."""
@@ -473,10 +588,11 @@ class Workbench:
         the project's own install records it has none for (made before it kept a history, or undone -
         Undo keeps a record as install.json.undone): each one's basket worked out as what it added
         to the install before it, and what it took out."""
-        got = K._load_json(os.path.join(self.settings.data_dir, "basket-history.json"), [])
+        got = K._load_json(self._history_path(), [])
         rec = [h for h in got if isinstance(h, dict)] if isinstance(got, list) else []
         have = {h.get("time") for h in rec}
-        root = os.path.join(self.kit.cfg.work, "backups") if self.kit.cfg.work else ""
+        work = self.runner().cfg.work
+        root = os.path.join(work, "backups") if work else ""
         prev: list = []
         for stamp in sorted(os.listdir(root)) if root and os.path.isdir(root) else []:
             for name, undone in (("install.json", False), ("install.json.undone", True)):
@@ -494,17 +610,22 @@ class Workbench:
                     prev = r["basket"]
         return sorted(rec, key=lambda h: str(h.get("time")), reverse=True)[:5]
 
+    def _history_path(self) -> str:
+        """Each route keeps its own install history (what's in its client)."""
+        name = "basket-history-direct.json" if self.runner() is self.direct else "basket-history.json"
+        return os.path.join(self.settings.data_dir, name)
+
     def after_install(self, ok: bool, basket: list, taken_out: list) -> None:
         """An install ended: it goes in the history (the last five), and when it worked what it
         installed leaves the basket (it's in the game now) and the take-outs are done."""
-        job = self.kit.job
+        job = self.runner().job
         state = "installed" if ok else (job.state if job and job.state == "stopped" else "failed")
-        last = self.kit.last_install() if ok else None          # the same time as the project's record of it
+        last = self.runner().last_install() if ok else None     # the same time as the project's record of it
         rec = {"time": (last or {}).get("time") or time.strftime("%Y%m%d-%H%M%S"), "result": state,
                "step": "" if ok else (job.step if job else ""), "basket": basket, "taken_out": taken_out}
-        got = K._load_json(os.path.join(self.settings.data_dir, "basket-history.json"), [])
+        got = K._load_json(self._history_path(), [])
         own = [h for h in got if isinstance(h, dict) and h.get("time") != rec["time"]] if isinstance(got, list) else []
-        K._save_json(os.path.join(self.settings.data_dir, "basket-history.json"), [rec, *own][:5])
+        K._save_json(self._history_path(), [rec, *own][:5])
         if ok:
             done = {C.entry_key(e): e for e in basket}
             self.save_basket([e for e in self.basket() if done.get(C.entry_key(e)) != e])
@@ -512,9 +633,12 @@ class Workbench:
                 os.remove(self._take_out_path())
 
     def kit_basket(self, plan: dict) -> list:
-        """What Install builds as the kit selects it: an entry with pieces left out is its other looks."""
+        """What Install builds as the kit selects it: an entry with pieces left out is its other looks
+        (mounts aren't the kit's: the workbench makes them)."""
         out = []
         for e, p in zip(self.install_list(), plan["entries"]):
+            if e.get("kind") == "mount":
+                continue
             if not e.get("leave_out"):
                 out.append(e)
                 continue
@@ -530,13 +654,44 @@ class Workbench:
 
     def kit_status(self) -> dict:
         items = self.install_list()
-        try:
-            args = self.kit_args()
-        except RuntimeError:                              # a catalog still loading: the entries' own
-            args = None
         game = {C.entry_key(e) for e in self.in_game()}
         basket = self.basket()
-        return self.kit.status(items, args) | {"plan": {
+        if self.runner() is self.direct:
+            plan = C.plan_basket(self.catalogs, items)
+            ready = all(e["state"] == "ready" for e in plan["entries"])
+            looks = {str(l["display"]) for e in plan["entries"] for l in e["looks"] if l.get("display")}
+            st = self.direct.status(looks if ready else None, {C.entry_key(e) for e in MT.basket_mounts(items)})
+        else:
+            try:
+                args = self.kit_args()
+            except RuntimeError:                          # a catalog still loading: the entries' own
+                args = None
+            kit_items = [e for e in items if e.get("kind") != "mount"]
+            st = self.kit.status(kit_items, args) | {"route": "kit"}
+            # the mounts are made at every install: built and in the client while the last install had these
+            last = st.get("last_install") or {}
+            want = sorted(C.entry_key(e) for e in MT.basket_mounts(items))
+            same = want == sorted(last.get("mounts") or [])
+            if not kit_items and want:
+                st["built"] = st["installed"] = bool(last) and same
+            elif not same:
+                st["built"] = st["installed"] = False
+        st["mounts"] = len(MT.basket_mounts(items))
+        last = st.get("last_install") or {}
+        if last.get("mounts") and last.get("data"):
+            patch = DR.RP.PATCH if self.runner() is self.direct else MP.KIT_PATCH
+            changed = MP.stale(last["data"], patch)
+            if changed:
+                st["mount_stale"] = changed
+                st["installed"] = False
+            gone = MP.item_rows_gone(last["data"], last)
+            if gone:
+                st["mount_icons_gone"] = gone
+                st["installed"] = False
+        src = self.sources.get("retail")
+        if st["mounts"] and (src is None or src.spec.kind != "local"):
+            st["mount_problem"] = "Mounts are made from your own retail install: set Retail items to \"My own install\" in Settings."
+        return st | {"plan": {
             "basket": len(basket), "adds": sum(1 for e in basket if C.entry_key(e) not in game),
             "in_game": len(game), "take_out": len(set(self.take_out()) & game), "builds": len(items)}}
 
@@ -585,7 +740,7 @@ class Workbench:
 
     def quit(self) -> None:
         """Another copy of the app takes over (app.py): this one stops - never in a kit job."""
-        if self.kit.busy():
+        if self.busy():
             raise RuntimeError("the workbench is busy with the kit - wait for it to finish")
         self.quitting = True
 
@@ -606,6 +761,7 @@ class Workbench:
                             for k, s in self.sources.items()],
                 "client": self.settings.client, "in_client": len(self.in_client), "log": self.log[-40:],
                 "problems": self.settings.problems(), "kit": {"bp": self.kit.cfg.bp, "work": self.kit.cfg.work},
+                "route": self.settings.route or "kit",
                 "setup": not self.settings.client, "updated": code_stamp() > STARTED_CODE + 1,
                 "app": app_info(), "instance": STARTED, "quitting": self.quitting}
 
@@ -748,6 +904,34 @@ class Workbench:
                 out["problems"].append(f"model {m['fdid']}: {type(e).__name__}: {e}")
         return out
 
+    def mount_catalog(self, key: str) -> MT.MountCatalog:
+        cat = self.mount_catalogs.get(key) or (next(iter(self.mount_catalogs.values()), None) if not key else None)
+        if cat is None:
+            raise LookupError("retail's mounts are still loading" if key in self.catalogs or not key else
+                              f"source {key!r} has no mounts loaded")
+        return cat
+
+    def mount_preview(self, key: str, display: int) -> dict:
+        """A mount's display as the 3D preview draws it: its model (with Stand) wearing the display's
+        skins, the parts its geoset data shows, what 3.3.5 can't show of it."""
+        cat = self.mount_catalog(key)
+        d = cat.displays.get(int(display))
+        if d is None:
+            raise LookupError(f"no mount display {display}")
+        textures = {11 + i: f for i, f in enumerate((d.get("textures") or [])[:3]) if f}
+        packed, lost = MT.geoset_data(d.get("geosets"))
+        out = {"display": int(display), "model": d.get("model"), "textures": [f for f in d.get("textures") or [] if f],
+               "geosets": {str(g): v for g, v in MT.geosets_shown(packed).items()}, "problems": [], "mesh": None}
+        if lost:
+            out["problems"].append(f"3.3.5 can't choose some of its parts ({lost}): they all show")
+        if len([f for f in (d.get("textures") or [])[3:] if f]):
+            out["problems"].append("its fourth skin texture has no place in 3.3.5")
+        try:
+            out["mesh"] = self.mesh(cat.source, d["model"], textures)
+        except Exception as e:
+            out["problems"].append(f"model {d.get('model')}: {type(e).__name__}: {e}")
+        return out
+
     def body(self, race: str, sex: int) -> dict:
         if self.bodies is None:
             raise LookupError("the character view needs BfA's bodies (Settings: BfA from wago.tools or a local install)")
@@ -786,6 +970,10 @@ class Workbench:
                 "item_geosets": {str(k): v for k, v in CH.ITEM_GEOSETS.items()}, "dress_order": CH.DRESS_ORDER}
 
     def run_kit(self, action: str, step: str = "") -> None:
+        if self.runner() is self.direct:
+            return self.run_direct(action)
+        if self.direct.busy():
+            raise RuntimeError("retail direct is busy - wait for its job to finish")
         k = self.kit
         if action == "stop":
             return k.stop()
@@ -794,17 +982,24 @@ class Workbench:
             looks = {str(l["display"]) for e in plan["entries"] for l in e["looks"] if l.get("display")}
             items, args, basket = self.install_list(), self.kit_args(plan), self.basket()
             out = [e for e in self.in_game() if C.entry_key(e) in set(self.take_out())]
+            rides = MT.basket_mounts(items)
+            kit_items = [e for e in items if e.get("kind") != "mount"]
 
             def go() -> bool:
                 ok = False
+                self._job_items = items
                 try:
-                    ok = k.go(items, looks, args)
+                    if not self._build_mounts(k, rides):
+                        return False
+                    ok = k.go(kit_items, looks, args) if args else self._mounts_alone(k, items)
                     return ok
                 finally:
+                    self._job_items, self._mount_patch, self._mount_built = [], None, None
                     self.after_install(ok, basket, out)
             k.start("go", go)
             return
-        jobs = {"create": (k.create,), "select": (k.select, self.install_list(), self.kit_args()),
+        jobs = {"create": (k.create,), "select": (k.select, [e for e in self.install_list() if e.get("kind") != "mount"],
+                                                     self.kit_args()),
                 "scan": (k.scan,), "build": (k.build,), "rerun": (k.build, step), "install": (k.install,),
                 "undo": (k.undo,)}
         if action not in jobs:
@@ -813,6 +1008,35 @@ class Workbench:
             raise ValueError(f"no step {step!r}")
         fn, *args = jobs[action]
         k.start(action if action != "rerun" else f"rerun {step}", fn, *args)
+
+    def run_direct(self, action: str) -> None:
+        """Retail direct's jobs: go (build and install), build, undo, stop."""
+        d = self.direct
+        if action == "stop":
+            return d.stop()
+        if self.kit.busy():
+            raise RuntimeError("the kit is busy - wait for its job to finish")
+        if action in ("go", "build"):
+            items, basket = self.install_list(), self.basket()
+            plan = C.plan_basket(self.catalogs, items)
+            waiting = [e["name"] for e in plan["entries"] if e["state"] != "ready"]
+            if waiting:
+                raise RuntimeError(f"{waiting[0] or 'an entry'}: its catalog is still loading")
+            out = [e for e in self.in_game() if C.entry_key(e) in set(self.take_out())]
+            if action == "build":
+                return d.start("build", d.go, items, plan, False)
+
+            def go() -> bool:
+                ok = False
+                try:
+                    ok = d.go(items, plan)
+                    return ok
+                finally:
+                    self.after_install(ok, basket, out)
+            return d.start("go", go)
+        if action == "undo":
+            return d.start("undo", d.undo)
+        raise ValueError(f"retail direct has no {action!r} - it builds everything in one go")
 
     # -- settings (the page's Settings view) ---------------------------------------
     def settings_view(self) -> dict:
@@ -824,6 +1048,8 @@ class Workbench:
                 "kit": {"work": kc.work, "local": kc.local, "armor_pieces": kc.armor_pieces, "equip_plus": kc.equip_plus,
                         "own": self.kit.own_copies()},
                 "equip_plus": self.kit.equip_plus_client() if kc.client_data else None,
+                "route": st.route or "kit", "direct": {"work": self.direct.work,
+                                                       "x64": bool(st.client) and K.is_x64_client(st.client)},
                 "checks": self.checks(), "first_run": not st.client, "data_dir": st.data_dir, "picker": P.available()}
 
     def checks(self) -> dict:
@@ -836,8 +1062,9 @@ class Workbench:
         c = st.client
         if c:
             data = os.path.isdir(os.path.join(c, "Data"))
-            exe = any(os.path.isfile(os.path.join(c, n)) for n in ("Wow.exe", "wow.exe", "WoW.exe"))
-            put("client", data, ("3.3.5 client" + ("" if exe else " (no Wow.exe here)") +
+            x64 = K.is_x64_client(c)
+            exe = x64 or os.path.isfile(os.path.join(c, "Wow.exe"))
+            put("client", data, (("3.3.5 x64 client" if x64 else "3.3.5 client") + ("" if exe else " (no Wow.exe here)") +
                                  (f": {len(self.in_client):,} items" if self.in_client else "")) if data else "no Data folder here")
         if kc.server_dbc:
             ok = os.path.isfile(os.path.join(kc.server_dbc, "Item.dbc"))
@@ -864,17 +1091,23 @@ class Workbench:
             put("work", True, f"the kit's project (retail {prj.get('build')})" if prj else "Install makes a new project here")
         if kc.client_data:
             ep = self.kit.equip_plus_client()
-            put("equip_plus", ep["installed"], ("Equip Plus is in your client" + ("" if ep["physics"] else
-                " - an older one: live physics needs 1.3.0 (its Releases page)")) if ep["installed"] else
+            put("equip_plus", ep["installed"], "The x64 client draws Equip Plus's 3D pieces itself" if ep["builtin"] else
+                ("Equip Plus is in your client" + ("" if ep["physics"] else
+                 " - an older one: live physics needs 1.3.0 (its Releases page)")) if ep["installed"] else
                 "Equip Plus isn't in your client - Install leaves its 3D pieces out")
+        if st.route == "direct":
+            why = self.direct.problems()
+            put("route", not why, why[0] if why else "Retail's own items go into the x64 client's " + DR.RP.PATCH)
         return out
 
     def apply_settings(self, v: dict) -> None:
         """The Settings view saved: the sources, the client and the kit's folders; a changed source
         is read again."""
-        if self.kit.busy():
-            raise RuntimeError("the kit is busy - change the settings when its job is done")
+        if self.busy():
+            raise RuntimeError("an install is running - change the settings when its job is done")
         st = self.settings
+        if v.get("route") in ("kit", "direct"):
+            st.route = "" if v["route"] == "kit" else "direct"
         norm = lambda p: os.path.normpath(str(p).strip().strip('"')) if str(p or "").strip() else ""
         st.client = norm(v.get("client", st.client))
         for key, label, product in (("retail", "Retail", "wow"), ("bfa", "BfA", None)):
@@ -904,7 +1137,7 @@ class Workbench:
     def basket_plan(self) -> dict:
         """The basket's entries and their looks; what's in the game (each marked when the next install
         takes it out); the install history."""
-        last = self.kit.last_install()
+        last = self.runner().last_install()
         plan = C.plan_basket(self.catalogs, self.basket())
         game = C.plan_basket(self.catalogs, self.in_game())["entries"]
         out = set(self.take_out())
@@ -919,20 +1152,23 @@ class Workbench:
         return plan
 
     def basket(self) -> list:
-        try:
-            with open(self.basket_path, encoding="utf-8") as fh:
-                return json.load(fh)
-        except (OSError, ValueError):
-            return []
+        # requests run on threads: a read holding the file open makes Windows refuse a save's replace
+        with self._basket_lock:
+            try:
+                with open(self.basket_path, encoding="utf-8") as fh:
+                    return json.load(fh)
+            except (OSError, ValueError):
+                return []
 
     def save_basket(self, entries: list) -> None:
         if not isinstance(entries, list):
             raise ValueError("the basket is a list")
-        os.makedirs(os.path.dirname(self.basket_path), exist_ok=True)
-        tmp = self.basket_path + ".part"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(entries, fh, indent=1)
-        os.replace(tmp, self.basket_path)
+        with self._basket_lock:
+            os.makedirs(os.path.dirname(self.basket_path), exist_ok=True)
+            tmp = self.basket_path + ".part"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(entries, fh, indent=1)
+            os.replace(tmp, self.basket_path)
 
 
 def _int(v: str | None) -> int | None:
@@ -1088,7 +1324,20 @@ def make_handler(wb: Workbench):
             if path == "/api/kit":
                 return self._json(wb.kit_status() | wb.install_notes())
             if path == "/api/kit/log":
-                return self._json(wb.kit.log_since(_int(q.get("since")) or 0))
+                return self._json(wb.runner().log_since(_int(q.get("since")) or 0))
+            if path == "/api/mounts":
+                mc = wb.mount_catalog(q.get("source", ""))
+                page = _int(q.get("page")) or 0
+                total, rows = mc.search(q.get("q", ""), q.get("kind", ""), page=page, junk=q.get("junk") == "1")
+                return self._json({"total": total, "page": page, "source": mc.source, "mounts": rows})
+            if path == "/api/mount":
+                mc = wb.mount_catalog(q.get("source", ""))
+                d = mc.detail(_int(q.get("id")) or 0)
+                if d is None:
+                    raise LookupError("no such mount")
+                return self._json(d | {"source": mc.source})
+            if path == "/api/mount/preview":
+                return self._json(wb.mount_preview(q.get("source", ""), _int(q.get("display")) or 0))
             cat = wb.catalog(q.get("source", ""))
             page = _int(q.get("page")) or 0
             if path == "/api/items":

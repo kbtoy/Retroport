@@ -27,7 +27,7 @@ import struct
 import threading
 from collections import defaultdict
 
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 TABLES = ("ItemDisplayInfo", "ModelFileData", "ComponentModelFileData", "TextureFileData",
           "ComponentTextureFileData", "ItemDisplayInfoMaterialRes", "ItemDisplayInfoModelMatRes",
           "HelmetGeosetData", "ChrRaces")
@@ -49,7 +49,8 @@ class DisplayIndex:
     """Where an item display's models and textures are (see the module doc)."""
 
     def __init__(self, d: dict):
-        # id -> [mr0, mr1, mm0, mm1, type0, type1, GeosetGroup x6, AttachmentGeosetGroup x6, HelmetGeosetVis x2]
+        # id -> [mr0, mr1, mm0, mm1, type0, type1, GeosetGroup x6, AttachmentGeosetGroup x6, HelmetGeosetVis x2,
+        #        GeosetGroupOverride]
         self.displays = {int(k): v for k, v in d["displays"].items()}
         self.model_files = {int(k): v for k, v in d["model_files"].items()}     # model resource -> [fdid]
         self.comp_models = {int(k): v for k, v in d["comp_models"].items()}     # fdid -> [race, gender, class, position]
@@ -79,7 +80,8 @@ class DisplayIndex:
             mr, mm = r["ModelResourcesID"], r["ModelMaterialResourcesID"]
             mt = list(r.get("ModelType") or [-1 if not mr[0] else ATTACHED, -1 if not mr[1] else ATTACHED])
             d["displays"][i] = [mr[0], mr[1], mm[0], mm[1], mt[0], mt[1], *list(r["GeosetGroup"])[:6],
-                                *(list(r.get("AttachmentGeosetGroup") or [0] * 6)[:6]), *list(r["HelmetGeosetVis"])[:2]]
+                                *(list(r.get("AttachmentGeosetGroup") or [0] * 6)[:6]), *list(r["HelmetGeosetVis"])[:2],
+                                r.get("GeosetGroupOverride") or 0]
         for _i, r in t["ModelFileData"]:
             d["model_files"][r["ModelResourcesID"]].append(r["FileDataID"])
         for i, r in t["ComponentModelFileData"]:
@@ -151,7 +153,7 @@ class DisplayIndex:
         if not r:
             return None
         return {"model_resources": r[0:2], "materials": r[2:4], "model_types": r[4:6], "geoset_groups": r[6:12],
-                "attachment_geosets": r[12:18], "helmet_vis": r[18:20]}
+                "attachment_geosets": r[12:18], "helmet_vis": r[18:20], "geoset_override": r[20] if len(r) > 20 else 0}
 
     def models(self, display: int, race: int, sex: int, _depth: int = 0) -> list[dict]:
         """The display's models for that race and sex: [{fdid, slot (0/1), position, type, textures {type: fdid}}]."""
@@ -381,6 +383,9 @@ def skeleton(read, m) -> dict:
     skel_id = getattr(m, "skeleton_file_id", 0)
     if skel_id:
         from wotlkconv.m2.skel import load_skeleton_chain
+
+        from ..convert import skeleton
+        skeleton.install()              # the parent skeleton's sequences too (HandsClosed...)
 
         def loader(fdid):
             try:

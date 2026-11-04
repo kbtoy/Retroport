@@ -193,6 +193,32 @@ class Source:
         with self._lock:
             return casc.read_file_id(fdid)
 
+    def raw_table(self, name: str) -> bytes:
+        """A table's file as it is (its encrypted sections, unreleased rows, zeroed)."""
+        self.open()
+        fdid = self._db2.get(name.lower())
+        if fdid is None:
+            raise SourceError(f"{name}.db2 is not in the listfile")
+        with self._lock:
+            return self._casc.read_file_id(fdid, zero_encrypted=True)
+
+    def parse(self, name: str, data: bytes) -> list[tuple[int, dict]]:
+        """``data`` (``name``'s file) read into rows."""
+        from wotlkconv.db.db2 import parse_db2
+        self.open()
+        return list(parse_db2(data, name, definitions=self._defs, table_name=name))
+
+    def try_read(self, fdid: int) -> tuple[bytes | None, str]:
+        """A file by id, or (None, why) - not in this build, not stored here, or encrypted."""
+        casc = self.open()
+        with self._lock:
+            return casc.try_read_file_id(fdid)
+
+    def size_of(self, fdid: int) -> int | None:
+        casc = self.open()
+        ckey = casc.root.ckey_for(fdid)
+        return casc.encoding.size_for(ckey) if ckey else None
+
 
 @dataclass
 class Catalog:
@@ -489,8 +515,14 @@ def plan_basket(catalogs: dict[str, Catalog], basket: list[dict], installed: lis
     an earlier one anyway, and - ``installed``: the basket of the install in the client, None when
     it isn't known - what's new since then and what the next install drops."""
     entries, first = [], {}                             # display -> the entry that brings it first
-    displays, items = set(), set()
+    displays, items, mounts = set(), set(), set()
     for e in basket:
+        if e.get("kind") == "mount":                    # a mount (mounts.py): its own entry, no looks
+            entries.append({k: e.get(k) for k in ("kind", "source", "id", "name", "icon", "quality", "sub")} | {
+                "key": entry_key(e), "looks": [], "left_out": [], "items": 0, "state": "ready", "shares": [],
+                "covered": False, "mount": {"id": e.get("id"), "display": e.get("display"), "kind": e.get("mount_kind")}})
+            mounts.add((e.get("source"), e.get("id")))
+            continue
         cat = catalogs.get(e.get("source", ""))
         looks, ids = cat.looks_for(e) if cat else ([], [])
         skip = {str(d) for d in e.get("leave_out") or []}             # pieces the user left out of it
@@ -508,8 +540,8 @@ def plan_basket(catalogs: dict[str, Catalog], basket: list[dict], installed: lis
         displays.update(mine)
         items.update((e.get("source"), i) for i in ids)
         entries.append(out)
-    plan = {"entries": entries, "looks": len(displays), "items": len(items), "known": installed is not None,
-            "removed": []}
+    plan = {"entries": entries, "looks": len(displays), "items": len(items), "mounts": len(mounts),
+            "known": installed is not None, "removed": []}
     if installed is not None:
         had = {entry_key(e) for e in installed}
         now = {o["key"] for o in entries}

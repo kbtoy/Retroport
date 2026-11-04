@@ -25,6 +25,11 @@ packed patch of that name would be. A kit whose client reader opens only MPQ fil
 module has no ``FolderArchive``) is handed our ``FolderArchive`` for those folders, in this process
 only - its files are not touched.
 
+And a model the client holds both as retail's (MD21) and, beneath it, as 3.3.5's (MD20) is read as
+the 3.3.5 one. The x64 client (wowdecomp-dx11) mounts retail bodies over the 3.3.5 ones and draws
+those, but it places a 3.3.5 helm by the 3.3.5 body it was made for (its helmet lift); the kit only
+reads MD20 bodies, so on that client it found no Kul Tiran or Pandaren body at all.
+
 The kit itself is changed in this process only - its files are never touched - where it trips over
 what the workbench gives it:
 
@@ -37,6 +42,12 @@ what the workbench gives it:
   thousands of files no one had made ("C1/C2 closure ... .anim missing");
 * the build plan forgets displays the selection no longer has (a piece taken out of the basket):
   the audit checked every display the plan ever held and wanted their files;
+* its export of retail's 3D pieces for a client mod (``build --extension``) leaves out helms -
+  their own model is the 3.3.5 row's - and with them the collection part some also wear (the Damned
+  Necrolyte skull's hood: group 27 of the set's shared body model). That part is exported too, by
+  the kit's own export run once more on just those parts (shown to it as slot ``head_collection``,
+  filtered by the head's own geoset groups), and the workbench gives Equip Plus rows for the helm
+  and its hood (``eprows``);
 * its ``measure`` (helm placement and body geosets, minutes the first time) waits until the
   selection holds something worn on the body: weapons need neither - until then it passes with
   nothing measured, and the workbench runs it when a selection needs it (``Kit.needs_measure``);
@@ -257,6 +268,34 @@ def show_folder_patches(client) -> bool:
     return True
 
 
+def classic_models_first(client) -> bool:
+    """Teach the kit's ``client`` module to read, for a model, the 3.3.5 (MD20) copy beneath a retail
+    (MD21) one (see the module doc); False when it does already."""
+    cls = getattr(client, "Client", None)
+    if cls is None or getattr(cls.who, "classic_first", False):
+        return False
+    who = cls.who
+
+    def _who(self, path, data=False):
+        if not str(path).lower().endswith(".m2"):
+            return who(self, path, data)
+        name, retail = str(path).replace("/", "\\"), None
+        for p, a in self.archives:
+            try:
+                if a.locate(name) is None:
+                    continue
+                body = a.read(name)
+            except Exception:
+                continue
+            if body[:4] != b"MD21":
+                return p, (body if data else None)
+            retail = retail or (p, body if data else None)
+        return retail
+    _who.classic_first = True
+    cls.who = _who
+    return True
+
+
 FILE_KEYED = ("ModelFileData", "TextureFileData")         # wago's CSV of these has no ID column
 
 
@@ -402,9 +441,12 @@ def wears_on_body(selection: dict) -> bool:
     return any((d or {}).get("slot") not in WEAPON_SLOTS for d in ((selection or {}).get("displays") or {}).values())
 
 
+MEASUREMENTS = ("helm_shift.json", "geoset_map.json")          # what the kit's measure writes in client\
+
+
 def measured(work: str) -> bool:
     """Whether the kit measured this project's client (helm placement and body geosets)."""
-    return all(os.path.isfile(os.path.join(work, "client", n)) for n in ("helm_shift.json", "geoset_map.json"))
+    return all(os.path.isfile(os.path.join(work, "client", n)) for n in MEASUREMENTS)
 
 
 def measure_when_worn(measure, bpcore) -> None:
@@ -417,6 +459,50 @@ def measure_when_worn(measure, bpcore) -> None:
             return 0
         return run(prj, log, only, *a, **k)
     measure.run = _run
+
+
+ATTACHED_SLOTS = ("head",)      # a slot whose own model is the 3.3.5 row's (the kit's export skips it; shoulders
+                                # too, but no retail shoulder is known to wear a collection part)
+ALIAS = "_collection"           # such a slot's collection part, shown to the export under <slot>_collection
+
+
+def attached_collections(build_mod, bpcore) -> None:
+    """The kit's export of retail's 3D pieces (``build --extension``) also gives a helm's collection
+    part (see the module doc)."""
+    export = build_mod.export_extension
+
+    def _export(prj, log, sel, plan, *a, **k):
+        export(prj, log, sel, plan, *a, **k)
+        retail = build_mod.Retail(prj)
+        parts = {}
+        for d, e in (sel.get("displays") or {}).items():
+            if e.get("slot") not in ATTACHED_SLOTS or not e.get("row"):
+                continue
+            ks = {kk for kk in (0, 1) if retail.multi_slot(e["row"].get(f"ModelResourcesID_{kk}", "0"))}
+            models = [m for m in e.get("models", []) if m["k"] in ks]
+            if models:
+                parts[d] = dict(e, slot=e["slot"] + ALIAS, models=models)
+        if not parts:
+            return
+        path = prj.path("out", "extension", "extension.json")
+        man = bpcore.load_json(path, {}) or {}
+        groups = build_mod.SLOT_GROUPS
+        for slot in ATTACHED_SLOTS:
+            groups[slot + ALIAS] = groups[slot]
+        slots = build_mod.PIECE_SLOTS
+        build_mod.PIECE_SLOTS = (*slots, *(s + ALIAS for s in ATTACHED_SLOTS))
+        try:
+            export(prj, log, {**sel, "displays": parts}, plan, *a, **k)
+        finally:
+            build_mod.PIECE_SLOTS = slots
+            for slot in ATTACHED_SLOTS:
+                groups.pop(slot + ALIAS, None)
+        got = bpcore.load_json(path, {}) or {}
+        for d, entry in got.items():
+            man[d] = dict(entry, slot=entry["slot"][:-len(ALIAS)] if entry["slot"].endswith(ALIAS) else entry["slot"])
+        bpcore.save_json(path, man)
+        log(f"kitlocal: {len(got)} helm(s) with a collection part (a hood) -> extension.json")
+    build_mod.export_extension = _export
 
 
 PLACEMENT, PLACEMENT_WARNING = "P1 placement", "P1 placement (warning)"
@@ -571,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
         import client as kit_client                       # the kit's own modules, as they are
         if show_folder_patches(kit_client):
             print("kitlocal: the kit is shown the client's open-folder patches", flush=True)
+        classic_models_first(kit_client)
     except ImportError:
         pass
     work = kit_args[kit_args.index("--work") + 1] if "--work" in kit_args[:-1] else ""
@@ -586,6 +673,7 @@ def main(argv: list[str] | None = None) -> int:
         import bpcore
         import build as kit_build
         plan_follows_selection(kit_build, bpcore)
+        attached_collections(kit_build, bpcore)
         import gates
         placement_warns(gates)
         import measure

@@ -4,6 +4,7 @@ their GitHub, the kit shown open-folder patches, settings with their defaults.""
 import io
 import json
 import os
+import threading
 import types
 import zipfile
 
@@ -211,13 +212,19 @@ def test_a_workbench_knows_which_copy_it_is(tmp_path, monkeypatch):
 def test_a_running_workbench_stops_for_another_copy_but_never_in_a_kit_job():
     import types
     from retroport.workbench import app as A
-    wb = types.SimpleNamespace(quitting=False, last_hello=1.0, last_bye=0.0, kit=types.SimpleNamespace(busy=lambda: False))
+    wb = types.SimpleNamespace(quitting=False, last_hello=1.0, last_bye=0.0, kit=types.SimpleNamespace(busy=lambda: False),
+                               direct=types.SimpleNamespace(busy=lambda: False))
+    wb.busy = types.MethodType(SV.Workbench.busy, wb)
     assert not A.should_end(wb, 0.0, 2.0, True)
     wb.quitting = True
     assert A.should_end(wb, 0.0, 2.0, True)
     wb.kit.busy = lambda: True
     assert not A.should_end(wb, 0.0, 2.0, True)
-    w = types.SimpleNamespace(kit=types.SimpleNamespace(busy=lambda: True), quitting=False)
+    wb.kit.busy, wb.direct.busy = (lambda: False), (lambda: True)          # retail direct's job counts too
+    assert not A.should_end(wb, 0.0, 2.0, True)
+    w = types.SimpleNamespace(kit=types.SimpleNamespace(busy=lambda: True), direct=types.SimpleNamespace(busy=lambda: False),
+                              quitting=False)
+    w.busy = types.MethodType(SV.Workbench.busy, w)
     with pytest.raises(RuntimeError, match="busy"):
         SV.Workbench.quit(w)
 
@@ -244,11 +251,12 @@ def _workbench(tmp_path, last=None):
     work, data = tmp_path / "work", tmp_path / "data"
     work.mkdir(exist_ok=True)
     data.mkdir(exist_ok=True)
-    wb = types.SimpleNamespace(basket_path=str(data / "basket.json"), settings=types.SimpleNamespace(data_dir=str(data)),
+    wb = types.SimpleNamespace(basket_path=str(data / "basket.json"), _basket_lock=threading.Lock(),
+                               settings=types.SimpleNamespace(data_dir=str(data), route=""),
                                kit=types.SimpleNamespace(cfg=types.SimpleNamespace(work=str(work)), job=K.Job("go"),
-                                                         last_install=lambda: last))
+                                                         last_install=lambda: last), direct=None)
     for name in ("basket", "save_basket", "in_game", "_take_out_path", "take_out", "set_take_out", "install_list",
-                 "history", "after_install"):
+                 "history", "after_install", "runner", "_history_path"):
         setattr(wb, name, types.MethodType(getattr(SV.Workbench, name), wb))
     return wb
 

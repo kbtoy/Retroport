@@ -1,0 +1,286 @@
+"""Retail direct: retail's own items into the x64 client (retailpack's rules, direct's build, install, undo)."""
+
+import json
+import os
+import struct
+import types
+
+import pytest
+
+from retroport.dbc import DBCFile
+from retroport.mpq import MPQ, write_archive
+from retroport.workbench import direct as DR
+from retroport.workbench import itemstats as IS
+from retroport.workbench import kit as K
+from retroport.workbench import retailpack as RP
+from retroport.workbench import server as SV
+
+
+# -- the client's rules ---------------------------------------------------------------------------
+def test_the_client_looks_for_a_models_texture_in_the_models_own_folder():
+    head = "item\\objectcomponents\\head\\helm_cloth_raidwarlockulatek_d_01_be_m.m2"
+    tex = "item\\objectcomponents\\collections\\cloth_raidwarlockulatek_d_01_shadowflamemythic.blp"
+    assert RP.object_folder(head) == "head" and RP.object_folder(tex) == "collections"
+    assert RP.texture_name(tex) == "cloth_raidwarlockulatek_d_01_shadowflamemythic"
+    # the Damned Necrolyte skull: its texture lives in collections\, the client looks beside the helm
+    assert RP.alias_for(head, tex) == "item\\objectcomponents\\head\\cloth_raidwarlockulatek_d_01_shadowflamemythic.blp"
+    coll = "item\\objectcomponents\\collections\\cloth_x_hu_m.m2"
+    assert RP.alias_for(coll, tex) == ""                                          # already where it looks
+    assert RP.alias_for("creature\\foo\\foo.m2", tex) == ""                         # not an item component
+
+
+def test_where_the_client_looks_for_a_displays_model():
+    assert RP.model_look("item/objectcomponents/collections/cloth_x_hu_m.m2") == \
+        "item\\objectcomponents\\collections\\cloth_x_hu_m.m2"
+    assert RP.model_look("item\\objectcomponents\\collections\\sub\\cloth_x.m2") == \
+        "item\\objectcomponents\\collections\\sub\\cloth_x.m2"                     # the name after collections\
+    assert RP.model_look("item\\objectcomponents\\head\\sub\\helm_x.m2") == "item\\objectcomponents\\head\\helm_x.m2"
+    assert RP.model_look("models\\unknown\\unk_1.m2") == ""
+
+
+def test_a_file_without_a_listfile_name_or_out_of_reach_gets_a_path_the_client_finds():
+    files = {10: "model", 11: "skin", 12: "texture", 13: "model"}
+    names = {10: "item\\objectcomponents\\head\\helm_x.m2", 13: "models\\unknown\\unk_exp10_13.m2"}
+    paths = RP.place(files, {11: 10, 12: None}, names, shown={10, 13})
+    assert paths[10] == names[10]
+    assert paths[11] == "item\\objectcomponents\\head\\wxl_11.skin"                # beside its model
+    assert paths[12] == "item\\objectcomponents\\wxl\\wxl_12.blp"
+    assert paths[13] == "item\\objectcomponents\\wxl\\unk_exp10_13_13.m2"          # a display model the client can reach
+    assert RP.model_look(paths[13]) == paths[13]
+
+
+def test_the_path_tables_round_trip_and_a_foreign_one_is_refused():
+    rows = {7321845: "item\\objectcomponents\\head\\helm_x.m2", 5: "character\\human\\male\\humanmale.m2"}
+    assert RP.read_paths(RP.write_paths(rows)) == rows
+    assert RP.read_paths(b"") == {}
+    bad = bytearray(RP.write_paths(rows))
+    struct.pack_into("<I", bad, 8, 3)                                              # three fields
+    with pytest.raises(ValueError):
+        RP.read_paths(bytes(bad))
+
+
+def _wdc5(layout: int) -> bytes:
+    return b"WDC5" + bytes(152) + struct.pack("<I", layout) + bytes(16)
+
+
+def test_a_tables_layout_is_read_from_its_header():
+    assert RP.layout_of(_wdc5(0x9F3AB8A9)) == 0x9F3AB8A9
+    assert RP.layout_of(b"WDC3" + bytes(20) + struct.pack("<I", 0x1234) + bytes(8)) == 0x1234
+    assert RP.layout_of(b"WDBC" + bytes(40)) is None
+
+
+def test_an_items_entry_is_its_retail_id_for_its_default_look():
+    spare: dict = {}
+    assert RP.entry_for(271546, 0, True, set(), spare) == 271546
+    assert RP.entry_for(19019, 0, True, {19019}, spare) == 1_019_019              # 3.3.5 has that id: its own
+    assert RP.entry_for(271546, 3, False, set(), spare) == 4_271_546              # Mythic
+    assert RP.entry_for(271546, 153, False, set(), spare) == 16_000_000           # past the numbered modifiers
+    assert RP.entry_for(271547, 153, False, set(), spare) == 16_000_001
+    assert RP.entry_for(271546, 153, False, set(), spare) == 16_000_000           # kept
+    assert RP.default_display([(3, 0, 732008, 2), (0, 5, 700000, 1), (1, 0, 710000, 3)]) == 700000
+    assert RP.default_display([(3, 2, 732008, 2), (4, 1, 731000, 1)]) == 731000
+    assert RP.default_display([]) == 0
+
+
+def test_the_item_sql_deletes_only_rows_this_route_made_and_reads_back_like_the_kits():
+    p = RP.Piece(4271546, 271546, 732008, 3, "Skull of the Damned Necrolyte", 4,
+                 **RP.item_fields({"ClassID": 4, "SubclassID": 5, "Material": 7, "InventoryType": 1,
+                                   "SheatheType": 0, "Sound_override_subclassID": 255}), label="Mythic")
+    assert (p.sub, p.sound) == (0, -1)                                             # cosmetic armour: Miscellaneous
+    text = RP.item_sql([p], [(271546, 700000)], "12.1.5.70391", "now")
+    assert "WHERE (`entry`, `displayid`) IN ((271546,700000),(4271546,732008));" in text
+    rows = IS.kit_items(text)
+    assert rows[4271546]["displayid"] == 732008 and rows[4271546]["description"] == "Mythic"
+    assert rows[4271546]["name"] == "Skull of the Damned Necrolyte" and rows[4271546]["InventoryType"] == 1
+
+
+def test_the_patch_writer_gives_a_file_a_second_name(tmp_path):
+    path = str(tmp_path / "patch-T.MPQ")
+    w = RP.PatchWriter(path)
+    w.add("a\\one.blp", b"texture")
+    w.add("A\\ONE.blp", b"again")                                                   # a name it has: kept as it was
+    assert w.alias("b\\two.blp", "a\\one.blp") and not w.alias("c\\x.blp", "missing.blp")
+    w.close()
+    m = MPQ(path)
+    try:
+        assert m.read("a\\one.blp") == b"texture" == m.read("b\\two.blp")
+        assert "b\\two.blp" in m.read("(listfile)").decode()
+    finally:
+        m.close()
+
+
+# -- the walk, build, install and undo --------------------------------------------------------------
+HEAD = 7321845
+LISTFILE = {HEAD: "item/objectcomponents/head/helm_cloth_x_be_m.m2",
+            7321900: "item/objectcomponents/head/helm_cloth_x_be_m00.skin",
+            7520491: "item/objectcomponents/collections/cloth_x_shadowflamemythic.blp",
+            948080: "item/objectcomponents/head/armorreflect4.blp",
+            7520805: "item/texturecomponents/torsouppertexture/cloth_x_tu_u_7520805.blp",
+            5000: "interface/icons/inv_helm_x.blp"}
+
+
+def _model(skin: int, texture: int) -> bytes:
+    def chunk(magic, payload):
+        return magic + struct.pack("<I", len(payload)) + payload
+    return chunk(b"MD21", b"\0" * 16) + chunk(b"SFID", struct.pack("<I", skin)) + chunk(b"TXID", struct.pack("<I", texture))
+
+
+class FakeRetail:
+    """A local install's tables and files, enough for one helm and one robe."""
+    spec = types.SimpleNamespace(kind="local")
+    build = "12.1.5.70391"
+
+    def __init__(self):
+        self.files = {HEAD: _model(7321900, 948080), 7321900: b"SKIN", 7520491: b"BLP2mythic", 948080: b"BLP2reflect",
+                      7520805: b"BLP2torso", 5000: b"BLP2icon"}
+        self.rows = {
+            "ItemDisplayInfo": [(732008, {"ModelResourcesID": [83020, 0], "ModelMaterialResourcesID": [1087579, 0]}),
+                                (731968, {"ModelResourcesID": [0, 0], "ModelMaterialResourcesID": [0, 0]})],
+            "ModelFileData": [(HEAD, {"FileDataID": HEAD, "ModelResourcesID": 83020})],
+            "TextureFileData": [(1, {"FileDataID": 7520491, "MaterialResourcesID": 1087579}),
+                                (2, {"FileDataID": 7520805, "MaterialResourcesID": 900})],
+            "ItemDisplayInfoMaterialRes": [(5, {"ItemDisplayInfoID": 731968, "MaterialResourcesID": 900, "ComponentSection": 6})],
+            "ItemDisplayInfoModelMatRes": [],
+            "Item": [(271546, {"ClassID": 4, "SubclassID": 1, "Material": 7, "InventoryType": 1, "SheatheType": 0,
+                               "Sound_override_subclassID": 255}),
+                     (271549, {"ClassID": 4, "SubclassID": 1, "Material": 7, "InventoryType": 20, "SheatheType": 0,
+                               "Sound_override_subclassID": 255})],
+            "ItemAppearance": [(1, {"ItemDisplayInfoID": 700000}), (2, {"ItemDisplayInfoID": 732008}),
+                               (3, {"ItemDisplayInfoID": 731968})],
+            "ItemModifiedAppearance": [(10, {"ItemID": 271546, "ItemAppearanceModifierID": 0, "ItemAppearanceID": 1, "OrderIndex": 0}),
+                                       (11, {"ItemID": 271546, "ItemAppearanceModifierID": 3, "ItemAppearanceID": 2, "OrderIndex": 0}),
+                                       (12, {"ItemID": 271549, "ItemAppearanceModifierID": 0, "ItemAppearanceID": 3, "OrderIndex": 0})]}
+
+    def raw_table(self, name):
+        return _wdc5(RP.TABLES[name])
+
+    def parse(self, name, data):
+        return self.rows.get(name, [])
+
+    def try_read(self, fdid):
+        return (self.files[fdid], "") if fdid in self.files else (None, "not in this install")
+
+    def size_of(self, fdid):
+        return len(self.files.get(fdid, b""))
+
+
+def _client(tmp_path):
+    root = tmp_path / "WotLK x64"
+    (root / "Data" / "enUS").mkdir(parents=True)
+    (root / "WowClient64.exe").write_bytes(b"")
+    (root / "Cache" / "WDB").mkdir(parents=True)
+    write_archive(str(root / "Data" / "enUS" / "locale-enUS.MPQ"), {})
+    items, displays = DBCFile(8), DBCFile(25)
+    items.add_record([19019, 2, 7, -1 & 0xFFFFFFFF, 1, 1, 13, 3])
+    displays.add_record([5] + [0] * 24)
+    write_archive(str(root / "Data" / "patch.MPQ"), {"DBFilesClient\\Item.dbc": items.to_bytes(),
+                                                     "DBFilesClient\\ItemDisplayInfo.dbc": displays.to_bytes()})
+    write_archive(str(root / "Data" / "patch-R.MPQ"),
+                  {RP.MODEL_PATHS: RP.write_paths({1: "character\\human\\male\\humanmale_hd.m2"}),
+                   RP.TEXTURE_PATHS: RP.write_paths({2: "character\\human\\male\\humanmaleskin00_00.blp"})})
+    return root
+
+
+def _direct(tmp_path, monkeypatch):
+    listfile = tmp_path / "listfile.csv"
+    listfile.write_text("".join(f"{k};{v}\n" for k, v in LISTFILE.items()))
+    d = DR.Direct(str(tmp_path / "data"), str(listfile))
+    d.client, d.source = str(_client(tmp_path)), FakeRetail()
+    monkeypatch.setattr(K, "wow_running", lambda: False)
+    return d
+
+
+PLAN = {"entries": [{"looks": [{"item": 271546, "display": 732008, "name": "Skull of the Damned Necrolyte", "quality": 4,
+                                "icon": 5000},
+                               {"item": 271549, "display": 731968, "name": "Damned Necrolyte's Rattling Robes", "quality": 4},
+                               {"item": 0, "display": 123, "name": "A look no item has"}]}]}
+BASKET = [{"kind": "set", "source": "retail", "id": 5884, "name": "Damned Necrolyte's Shattered Restraints"}]
+
+
+def test_retail_direct_builds_a_patch_the_x64_client_finds_everything_in(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    assert d.problems() == []
+    assert d.go(BASKET, PLAN, install=False)
+    out = os.path.join(d.work, "out")
+    m = MPQ(os.path.join(out, RP.PATCH))
+    try:
+        assert json.loads(m.read(RP.MANIFEST))["looks"] == ["731968", "732008"]
+        assert all(m.has(f"DBFilesClient\\{t}.db2") for t in RP.TABLES)
+        assert m.read(LISTFILE[HEAD].replace("/", "\\")) == FakeRetail().files[HEAD]
+        assert m.has("item\\objectcomponents\\head\\helm_cloth_x_be_m00.skin")          # the model's own files
+        assert m.has("item\\objectcomponents\\head\\armorreflect4.blp")
+        assert m.read("item\\objectcomponents\\head\\cloth_x_shadowflamemythic.blp") == b"BLP2mythic"   # beside the helm
+        assert m.read("interface\\icons\\inv_helm_x.blp") == b"BLP2icon"
+        models, textures = RP.read_paths(m.read(RP.MODEL_PATHS)), RP.read_paths(m.read(RP.TEXTURE_PATHS))
+        assert models[1] == "character\\human\\male\\humanmale_hd.m2"                     # patch-R's rows kept
+        assert models[HEAD] == "item\\objectcomponents\\head\\helm_cloth_x_be_m.m2" and 7321900 in models
+        assert textures[2] and textures[7520805].endswith("cloth_x_tu_u_7520805.blp")
+    finally:
+        m.close()
+    sql = open(d.sql_files()[0], encoding="utf-8").read()
+    rows = IS.kit_items(sql)
+    assert sorted(rows) == [271549, 4271546]                     # the robe's default look; the skull's Mythic one
+    assert rows[4271546]["description"] == "Mythic" and rows[271549]["description"] == ""
+    assert any("checked: every file the client opens" in line for line in d.lines)
+    assert any("A look no item has" in line for line in d.lines)
+    st = d.status({"731968", "732008"})
+    assert st["built"] and not st["installed"] and st["route"] == "direct"
+    assert d.built_record()["entries"] == {"732008": 4271546, "731968": 271549}
+
+
+def test_retail_direct_installs_backs_up_and_undoes(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    dest = os.path.join(d.client, "Data", RP.PATCH)
+    assert d.go(BASKET, PLAN)
+    assert os.path.isfile(dest) and not os.path.isdir(os.path.join(d.client, "Cache"))
+    first = d.last_install()
+    assert first["added"] == [dest] and first["basket"] == BASKET and first["data"] == d.cfg.client_data
+    assert d.status({"731968", "732008"})["installed"]
+    assert d.go(BASKET, PLAN)                                     # again: the first one backed up
+    second = d.last_install()
+    assert second["client"] == [RP.PATCH]
+    assert os.path.isfile(os.path.join(second["backup"], "client", RP.PATCH))
+    assert d.undo() and os.path.isfile(dest)                      # the first install's patch is back
+    assert d.undo() and not os.path.exists(dest)                  # and then nothing
+    assert not d.undo()
+    sql = open(d.sql_files()[0], encoding="utf-8").read()
+    assert "(4271546,732008)" in sql.split("INSERT")[0]           # rows it made are its to replace
+
+
+def test_retail_direct_never_replaces_another_tools_patch(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    write_archive(os.path.join(d.client, "Data", RP.PATCH), {"something": b"else"})
+    assert not d.go(BASKET, PLAN)
+    assert any("another tool's patch" in line for line in d.lines)
+    assert d.last_install() is None
+
+
+def test_retail_direct_needs_the_x64_client_and_a_local_retail(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    os.remove(os.path.join(d.client, "WowClient64.exe"))
+    d.source = types.SimpleNamespace(spec=types.SimpleNamespace(kind="wago"))
+    why = d.problems()
+    assert any("x64 client" in w for w in why) and any("own install" in w for w in why)
+    with pytest.raises(RuntimeError):
+        d.start("go", d.go, BASKET, PLAN)
+
+
+def test_a_table_of_another_layout_stops_the_build(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    d.source.raw_table = lambda name: _wdc5(0x12345678)
+    with pytest.raises(ValueError, match="layout"):
+        d.go(BASKET, PLAN, install=False)
+
+
+# -- the workbench ----------------------------------------------------------------------------------
+def test_settings_route_picks_what_install_runs():
+    kit, direct = types.SimpleNamespace(busy=lambda: False), types.SimpleNamespace(busy=lambda: False)
+    wb = types.SimpleNamespace(settings=types.SimpleNamespace(route=""), kit=kit, direct=direct)
+    assert SV.Workbench.runner(wb) is kit
+    wb.settings.route = "direct"
+    assert SV.Workbench.runner(wb) is direct
+    with pytest.raises(ValueError, match="one go"):
+        SV.Workbench.run_direct(wb, "rerun")
+    kit.busy = lambda: True
+    with pytest.raises(RuntimeError, match="busy"):
+        SV.Workbench.run_direct(wb, "go")

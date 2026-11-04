@@ -14,6 +14,7 @@ const S = {
   meta: null, status: null, source: "", view: "items",
   items: {page: 0, total: 0, loading: false, key: ""},
   sets: {kind: "transmog", page: 0, total: 0, loading: false, key: ""},
+  mounts: {kind: "", page: 0, total: 0, loading: false, key: ""},
   basket: [], open: null,
 };
 
@@ -97,7 +98,7 @@ async function pollStatus() {
   if (busy || !st.sources.length) setTimeout(pollStatus, 1200);
 }
 function renderSources() { $$("#sources button").forEach((b, i) => b.classList.toggle("on", S.status.sources[i].key === S.source)); }
-function refreshAll() { searchItems(true); searchSets(true); }
+function refreshAll() { searchItems(true); searchSets(true); searchMounts(true); }
 
 // ---------------------------------------------------------------------------- items
 function itemParams() {
@@ -303,6 +304,130 @@ async function openSet(id, kind = "transmog") {
 // slots that are one kind of piece: a chest and a robe, a two-hander and a one-hander
 const SLOT_KIND = {20: 5, 17: 13, 21: 13, 22: 14, 25: 15, 26: 15};
 
+// ---------------------------------------------------------------------------- mounts
+// Retail's mounts (mounts.py): each one is a spell, its creature and the item that teaches it in
+// 3.3.5; a mount with several looks rides the one picked here. Mounts of one model in other skins
+// are one family: one card, each a version in the drawer, like a set's.
+const MOUNT_KINDS = {ground: "Ground mount", flying: "Flying mount"};
+function mountParams() {
+  return {source: S.source, q: $("#q").value.trim(), kind: S.mounts.kind, junk: $("#m-junk").checked ? 1 : ""};
+}
+async function searchMounts(reset) {
+  if (!S.source) return;
+  const p = mountParams(), key = JSON.stringify(p);
+  if (reset) { S.mounts.page = 0; S.mounts.key = key; $("#mount-grid").replaceChildren(); $("#mount-more").hidden = true; }
+  if (S.mounts.loading && !reset) return;
+  const token = S.mounts.token = (S.mounts.token || 0) + 1;
+  S.mounts.loading = true;
+  try {
+    const res = await api("/api/mounts", {...p, page: S.mounts.page});
+    if (token !== S.mounts.token) return;
+    $("#mount-grid").append(...res.mounts.map(mountCard));
+    const shown = $("#mount-grid").children.length;
+    $("#mount-summary").textContent = res.total ? plural(res.total, "mount family") +
+      (shown < res.total ? ` · showing ${shown.toLocaleString()}` : "") : "Nothing matches.";
+    $("#mount-more").hidden = shown >= res.total;
+  } catch (e) { $("#mount-summary").textContent = e.message; if (/loading/.test(e.message)) setTimeout(() => S.view === "mounts" && searchMounts(true), 3000); }
+  finally { if (token === S.mounts.token) S.mounts.loading = false; }
+}
+function mountEntry(m, display = 0) {
+  return {kind: "mount", source: S.source, id: m.id, name: m.name, icon: m.icon, quality: m.quality, sub: MOUNT_KINDS[m.kind],
+          mount_kind: m.kind, display: display || (m.displays || [])[0] || 0};
+}
+function mountCard(m) {
+  const k = `mount:${S.source}:${m.id}`;
+  return el("div", {class: "card", "data-id": m.id, "data-root": m.root ?? m.id, onclick: () => openMount(m.id)},
+    icon(m.icon, m.quality),
+    el("div", {class: "meta"},
+      el("div", {class: "name", style: `color:${qcolor(m.quality)}`, title: m.name}, m.name),
+      el("div", {class: "sub"}, [MOUNT_KINDS[m.kind], m.source_label].filter(Boolean).join(" · "),
+         m.versions > 1 ? el("span", {class: "badge dim", title: "Mounts of this model in other skins"}, `${m.versions} versions`) : null,
+         m.displays.length > 1 ? el("span", {class: "badge dim"}, `${m.displays.length} looks`) : null)),
+    addButton(k, () => mountEntry(m)));
+}
+async function openMount(id, display = 0) {
+  const m = await api("/api/mount", {source: S.source, id});
+  S.open = {kind: "mount", id, root: m.root ?? id};       // its family's card stays marked
+  PV.step = null;
+  markSelected();
+  const k = `mount:${S.source}:${m.id}`;
+  const inside = S.basket.find(e => keyOf(e) === k);
+  let chosen = display || (inside && inside.display) || m.displays[0];
+  const body = [el("div", {class: "d-head"}, icon(m.icon, m.quality, "lg"),
+    el("div", {}, el("h2", {style: `color:${qcolor(m.quality)}`}, m.name),
+       el("div", {class: "d-sub"}, [MOUNT_KINDS[m.kind], m.source_label].filter(Boolean).join(" · ")),
+       m.item_name ? el("div", {class: "d-sub"}, `Taught by ${m.item_name}`) : null))];
+  const pb = previewBox();
+  const ids = el("div", {class: "kv"});
+  const showIds = d => ids.replaceChildren(...kv("Mount", m.id), ...kv("Spell", m.spell), ...kv("Display", d),
+                                          ...(m.item ? kv("Item", m.item) : []));
+  showIds(chosen);
+  // its versions (the other mounts of its model, in other skins) on top, like a set's: each opens here
+  const family = m.family || [];
+  if (family.length > 1) {
+    const chips = versionChips(family.map(f => ({label: f.label, icon: icon(f.icon, f.quality, "xs"),
+      title: [f.name, MOUNT_KINDS[f.kind], f.source_label].filter(Boolean).join(" · "), on: f.id === m.id,
+      pick: () => openMount(f.id)})));
+    if (!pb.add(chips)) body.push(section("Versions", chips));
+  }
+  if (pb.v) {
+    const picker = pb.controls.querySelector(".pv-pick");
+    if (picker) picker.hidden = true;                      // a mount alone: no race or sex
+    if (m.displays.length > 1) {
+      pb.add(versionChips(m.displays.map((d, i) => ({label: `Look ${i + 1}`, title: `display ${d}`, on: d === chosen,
+        pick: () => {
+          chosen = d; showIds(d); loadMount(pb, d);
+          const e = S.basket.find(x => keyOf(x) === k);
+          if (e && e.display !== d) { e.display = d; saveBasket(); }     // the basket rides the look picked
+        }}))));
+    }
+    loadMount(pb, chosen);
+    body.push(pb.box);
+  }
+  if (m.description) body.push(section("About", el("div", {class: "d-sub"}, m.description)));
+  if (m.source_text) body.push(section("Where retail has it", el("div", {class: "d-sub"}, m.source_text.replace(/\|[cCrR][0-9a-fA-F]{0,8}|\|n/g, " "))));
+  body.push(section("Ids", ids));
+  body.push(el("div", {class: "muted small"}, "In 3.3.5 it is a mount spell like the epic ones (" +
+    (m.kind === "flying" ? "280% flying, 100% on the ground" : "100%") + "), learned from its item."));
+  const actions = [el("button", {class: "btn", onclick: () => toggleBasket(k, mountEntry(m, chosen))},
+                      inBasket(k) ? "Remove from basket" : "Add to basket")];
+  if (family.length > 1) {
+    actions.push(el("button", {class: "btn ghost", onclick: () => {
+      for (const f of family) {
+        if (!inBasket(`mount:${S.source}:${f.id}`)) S.basket.push(mountEntry(f, f.id === m.id ? chosen : 0));
+      }
+      saveBasket(); toast(`${family.length} versions in the basket`); openMount(m.id, chosen);
+    }}, `Add all ${family.length} versions`));
+  }
+  actions.push(el("a", {class: "btn ghost", href: `https://www.wowhead.com/spell=${m.spell}`, target: "_blank", rel: "noopener"}, "Wowhead ↗"));
+  body.push(el("div", {class: "actions"}, actions));
+  showDrawer(body);
+}
+// A mount's look: its model wearing the display's skins, the parts its geoset data picks.
+function loadMount(pb, display) {
+  pb.load(async () => {
+    const v = pb.v, token = ++PV.token;
+    pb.info.textContent = "Loading…";
+    try {
+      const p = await api("/api/mount/preview", {source: S.source, display});
+      if (token !== PV.token) return;
+      v.clear();
+      pb.textures.replaceChildren(...p.textures.map(f => textureThumb(S.source)({fdid: f, name: String(f)})));
+      if (p.mesh) {
+        v.add(p.mesh, {texUrl: texUrl(S.source), visible: id => {
+          const want = p.geosets[Math.floor(id / 100)];
+          return want == null || id === want;
+        }});
+        v.fit("front");
+      }
+      v.canvas.hidden = !p.mesh;
+      v.draw();
+      pb.info.textContent = p.mesh ? `${p.mesh.triangles.toLocaleString()} triangles` : "No model found.";
+      notes(pb.info, p.problems);
+    } catch (e) { if (token === PV.token) pb.info.textContent = e.message; }
+  });
+}
+
 // ---------------------------------------------------------------------------- drawer
 function section(title, ...kids) { return el("div", {class: "d-sec"}, el("h3", {}, title), ...kids); }
 function kv(k, v) {
@@ -324,7 +449,7 @@ function closeDrawer() {
 function markSelected() {
   $$(".card.sel").forEach(c => c.classList.remove("sel"));
   if (!S.open) return;
-  const grid = S.open.kind === "item" ? "#item-grid" : "#set-grid";
+  const grid = S.open.kind === "item" ? "#item-grid" : S.open.kind === "mount" ? "#mount-grid" : "#set-grid";
   const same = S.open.kind === "item" ? `[data-id="${S.open.id}"]` : `[data-root="${S.open.root ?? S.open.id}"]`;
   $$(`${grid} .card${same}`).forEach(c => c.classList.add("sel"));
 }
@@ -341,20 +466,26 @@ function toggleBasket(k, entry) {
   if (inBasket(k)) { S.basket = S.basket.filter(e => keyOf(e) !== k); toast(`Removed ${entry.name}`); }
   else { S.basket.push(entry); toast(`Added ${entry.name}`); }
   saveBasket();
-  if (S.open) (S.open.kind === "item" ? openItem(S.open.id) : openSet(S.open.id, S.open.kind === "itemset" ? "itemset" : "transmog"));
+  if (S.open) reopen(S.open);
+}
+function reopen(o) {
+  o.kind === "item" ? openItem(o.id) : o.kind === "mount" ? openMount(o.id) : openSet(o.id, o.kind === "itemset" ? "itemset" : "transmog");
 }
 async function saveBasket() {
   $("#basket-count").textContent = S.basket.length;
   $$(".add[data-key]").forEach(b => { const on = inBasket(b.dataset.key); b.classList.toggle("in", on); b.textContent = on ? "✓" : "+"; });
-  try {
-    await fetch("/api/basket", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(S.basket)});
-  } catch (e) { toast("Could not save the basket"); }
+  // one save at a time, in order: two quick clicks never land the older basket last
+  const body = JSON.stringify(S.basket);
+  S.saving = (S.saving || Promise.resolve()).then(() =>
+    fetch("/api/basket", {method: "POST", headers: {"Content-Type": "application/json"}, body})
+      .catch(() => toast("Could not save the basket")));
+  await S.saving;
   if (S.view === "basket") renderBasket();
   if (S.view === "backport") loadKit();
 }
 function basketCounts(entries) {
   const n = kind => entries.filter(e => e.kind === kind).length;
-  return [[n("set"), "transmog set"], [n("itemset"), "item set"], [n("item"), "item"], [n("look"), "look"]]
+  return [[n("set"), "transmog set"], [n("itemset"), "item set"], [n("item"), "item"], [n("look"), "look"], [n("mount"), "mount"]]
     .filter(([c]) => c).map(([c, w]) => plural(c, w)).join(", ") || "nothing";
 }
 // an install's time stamp (20261014-193005) as "Oct 14, 19:30"
@@ -380,6 +511,7 @@ function openEntry(e, itemId = null) {
   if (itemId != null) openItem(itemId, back);
   else if (e.kind === "item") openItem(e.id);
   else if (e.kind === "look") { const it = ((e.looks || [])[0] || {}).item; if (it) openItem(it); }
+  else if (e.kind === "mount") { show("mounts"); openMount(e.id, (e.mount || {}).display); }
   else openSet(e.id, e.kind === "itemset" ? "itemset" : "transmog");
 }
 function removeEntries(keys, what) {
@@ -465,8 +597,8 @@ async function renderBasket() {
   const n = plan.entries.length;
   $("#basket-clear").disabled = !n;
   $("#basket-summary").textContent = n
-    ? `${basketCounts(plan.entries)}: ${plural(plan.looks, "look")} from ${plural(plan.items, "item")}. ` +
-      "The next install adds these to your game - remove anything you don't want, then give them stats." :
+    ? `${basketCounts(plan.entries)}` + (plan.looks ? `: ${plural(plan.looks, "look")} from ${plural(plan.items, "item")}` : "") +
+      ". The next install adds these to your game - remove anything you don't want" + (plan.looks ? ", then give them stats." : ".") :
     "The next install adds what you put here to your game.";
   renderGame(plan);
   renderHistory(plan.history || []);
@@ -475,7 +607,7 @@ async function renderBasket() {
     $("#basket-list").replaceChildren(el("div", {class: "empty"}, "Nothing picked yet. Use + on any item or set."));
     return;
   }
-  const groups = [["set", "Transmog sets"], ["itemset", "Item sets"], ["item", "Items"], ["look", "Looks"]];
+  const groups = [["set", "Transmog sets"], ["itemset", "Item sets"], ["item", "Items"], ["look", "Looks"], ["mount", "Mounts"]];
   $("#basket-list").replaceChildren(...groups.map(([kind, title]) => {
     const rows = plan.entries.filter(e => e.kind === kind);
     return rows.length ? el("div", {class: "basket-group"}, el("h3", {}, `${title} (${rows.length})`), rows.map(e => basketRow(e, plan))) : null;
@@ -507,7 +639,8 @@ function basketRow(e, plan) {
   const looks = e.looks;
   const status = e.in_game ? el("span", {class: "badge dim", title: "In your game already: the next install builds it again " +
                                                    "with what you changed (pieces left out, say)"}, "in your game") : null;
-  const what = e.state === "loading" ? "loading its catalog…" : e.state === "missing" ? `not found in ${sourceLabel(e.source)}` :
+  const what = e.kind === "mount" ? e.sub || "Mount" :
+    e.state === "loading" ? "loading its catalog…" : e.state === "missing" ? `not found in ${sourceLabel(e.source)}` :
     [e.kind !== "itemset" ? e.sub : "", plural(looks.length, "look"), e.items > 1 ? plural(e.items, "item") : ""].filter(Boolean).join(" · ");
   const warn = e.covered ? `Everything in it comes with ${e.shares.join(", ")} already - it adds nothing.`
              : e.shares.length ? `Shares some looks with ${e.shares.join(", ")}.` : "";
@@ -608,10 +741,23 @@ function renderSettings() {
   $("#st-welcome").hidden = !v.first_run;
   $("#st-data").textContent = v.data_dir;
   $("#st-game").replaceChildren(
-    stField("client", "3.3.5a client folder", v.client, {hint: "the folder with Wow.exe and Data"}),
+    stField("client", "3.3.5a client folder", v.client, {hint: "the folder with Wow.exe (or the x64 client's WowClient64.exe) and Data"}),
     stField("server_dbc", "Server dbc folder (optional)", v.server_dbc,
             {hint: "Install adds the new items to Item.dbc and ItemDisplayInfo.dbc here. Empty: the server is left alone.",
              placeholder: "e.g. D:\\AzerothCore\\Data\\dbc"}));
+  const route = v.route || "kit", routeCheck = v.checks.route;
+  const routeChoice = (val, label, sub) => [el("label", {class: "check"},
+    el("input", {type: "radio", name: "st-route", value: val, checked: route === val}), " " + label),
+    el("span", {class: "fhint muted route-sub"}, sub)];
+  $("#st-route").replaceChildren(el("div", {class: "choice"},
+    ...routeChoice("kit", "Backport kit", "Converts each look for any 3.3.5a client, 32-bit or x64 (Equip Plus adds the 3D pieces)."),
+    ...routeChoice("direct", "Retail direct", "Retail's own items, as they are, into the x64 client, and item SQL for your " +
+                   "server: nothing converted, so nothing to measure or audit."),
+    routeCheck ? el("span", {class: "fcheck " + (routeCheck[0] ? "ok" : "warn")}, (routeCheck[0] ? "✓ " : "! ") + routeCheck[1]) :
+      el("span", {class: "fhint muted"}, v.direct.x64 ? "Your client is the x64 client: either way works." :
+        "Retail direct needs the x64 client (WowClient64.exe) and retail read from your own install."),
+    el("span", {class: "fhint muted"}, "Each way keeps its own install and Undo. Retail direct's items show retail's own " +
+       "looks, which a 32-bit client can't draw; it builds in " + v.direct.work + ".")));
   const bfaBrowse = el("label", {class: "check"}, el("input", {type: "checkbox", id: "st-bfa-browse", checked: v.bfa.browse}),
                        " Also browse BfA's items (a second tab)");
   $("#st-sources").replaceChildren(
@@ -644,6 +790,8 @@ function renderSettings() {
       const ep = v.equip_plus;
       if (!ep || !ep.installed) return el("div", {class: "fhint muted"},
         "Live physics and better fit are options of Equip Plus in your client - it isn't there.");
+      if (ep.builtin) return el("div", {class: "fhint muted"},
+        "The x64 client draws Equip Plus's pieces itself; its live physics and fit options aren't in it yet.");
       const box = (id, on, label, hint) => el("label", {class: "check", title: hint},
         el("input", {type: "checkbox", id, checked: on, disabled: id === "st-ep-physics" && !ep.physics}), " " + label);
       return el("div", {class: "field"},
@@ -664,6 +812,7 @@ async function saveSettings() {
     retail: {kind: kind("retail"), path: val("retail-path")},
     bfa: {kind: kind("bfa"), path: val("bfa-path"), browse: $("#st-bfa-browse").checked},
     dbd: val("dbd"), listfile: val("listfile"),
+    route: ($("input[name=st-route]:checked") || {value: "kit"}).value,
     kit: {work: val("work"), local: $("#st-local").checked,
           armor_pieces: $("#st-armor_pieces").checked, equip_plus: $("#st-equip_plus").value}};
   if ($("#st-ep-physics")) body.equip_plus_options = {physics: $("#st-ep-physics").checked, pivots: $("#st-ep-pivots").checked,
@@ -722,7 +871,7 @@ function stepWords(step) {
   return x ? x.words : step;
 }
 function renderKit() {
-  const st = K.status, c = st.settings, running = kitRunning(), j = st.job;
+  const st = K.status, c = st.settings, running = kitRunning(), j = st.job, direct = st.route === "direct";
   const pl = st.plan || {basket: S.basket.length, adds: S.basket.length, in_game: 0, take_out: 0, builds: S.basket.length};
   const n = pl.builds, last = st.last_install;
 
@@ -742,22 +891,39 @@ function renderKit() {
       el("a", {href: "#", onclick: ev => { ev.preventDefault(); show("basket"); }}, n ? "Review the basket" : "Go to the basket")));
   const toSettings = text => el("a", {href: "#", onclick: ev => { ev.preventDefault(); show("settings"); }}, text);
   $("#k-where").replaceChildren(
+    el("div", {}, el("span", {class: "k"}, "Way"), direct ? "Retail direct - retail's own items into the x64 client" :
+      "Backport kit - converted for any 3.3.5a client", " ", toSettings("change")),
     el("div", {}, el("span", {class: "k"}, "Client"), c.client_data || el("span", {class: "warn"}, "not set"), " ", toSettings("change")),
+    direct ? el("div", {}, el("span", {class: "k"}, "Server"), el("span", {class: "muted"}, "item SQL for you to apply (its dbc folder is left alone)")) :
     el("div", {}, el("span", {class: "k"}, "Server"), c.server_dbc ||
       el("span", {class: "muted"}, "left alone - set its dbc folder in Settings to add the items there too"),
       c.server_dbc ? " " : "", c.server_dbc ? toSettings("change") : ""));
   const notes = [];
-  if (st.project) {
+  if (direct) {
+    if (st.retail_build) notes.push(`<span class="ok">✓</span> Retail ${st.retail_build}'s own tables and files, straight from ` +
+      `your local install into ${st.patch_name} - nothing converted.`);
+    const sm = st.summary || {};
+    if (sm.files) notes.push(`Last build: ${plural(sm.items || 0, "item")}, ${plural(sm.files, "file")} (${sm.mb} MB)` +
+      (sm.unreadable ? `, <span class="warn">${sm.unreadable} unreadable from your install</span>` : "") + ".");
+  } else if (st.project) {
     if (st.local) notes.push(`<span class="ok">✓</span> Retail ${st.project.build} straight from your local install.`);
     else if (c.local && st.retail_build) notes.push(`<span class="warn">!</span> The kit's project is pinned to retail ${st.project.build}; ` +
       `your install is ${st.retail_build}, so its files come from wago.tools.`);
   }
   for (const p of st.problems) notes.push(`<span class="warn">!</span> Settings: ${p}`);
+  if (st.mount_problem) notes.push(`<span class="warn">!</span> ${st.mount_problem}`);
+  if (st.mount_stale) notes.push(`<span class="warn">!</span> ${st.mount_stale.join(", ")} changed after your mounts went in ` +
+    `(a race package installed again?): its new spell, creature and sound rows are hidden until you Install again.`);
+  if (st.mount_icons_gone) notes.push(`<span class="warn">!</span> ${st.mount_icons_gone.join(", ")} was replaced after your ` +
+    `mounts went in (another install?): the items that teach them show a red question mark until you Install again.`);
+  if (st.mounts && !st.mount_problem) notes.push(`${plural(st.mounts, "mount")}: ` + (direct ?
+    "retail's own models, in the same patch." : `converted for any 3.3.5a client, in a patch of their own (patch-M).`) +
+    " Each is a spell, its creature with retail's sounds and the item that teaches it (retail's icon) - in the SQL to apply.");
   if (st.foreign) notes.push(`<span class="warn">!</span> Your backport project has ${plural(st.foreign, "look")} made outside the ` +
     `workbench that aren't in your basket - <a href="#" data-go="basket">bring them in or let them go</a> first.`);
   if (st.stats && st.stats.without) notes.push(`<span class="warn">!</span> ${st.stats.without} of ${plural(st.stats.pieces, "piece")} ` +
     `have no stats yet - they'll be level-1 cosmetic copies. <a href="#" data-go="stats">Give them stats</a>`);
-  if (st.equip_plus && !st.equip_plus.wanted) notes.push(`Equip Plus isn't in your client: Install leaves out the extra 3D pieces ` +
+  if (!direct && st.equip_plus && !st.equip_plus.wanted) notes.push(`Equip Plus isn't in your client: Install leaves out the extra 3D pieces ` +
     `(skirts, boot shells, buckles, 3D capes); everything else works on any 3.3.5a client.`);
   renderAudit(st.audit || {warnings: [], fails: []}, running);
   $("#stats-state").textContent = st.stats && st.stats.without ? st.stats.without : "";
@@ -777,6 +943,7 @@ function renderKit() {
     const go = j.name === "go";
     const rows = [...(go && (!st.project || j.step === "create") ? [["create", "Create the kit's project"]] : []),
                   ...st.steps.map(x => [x.step, x.words]),
+                  ...(go && st.mounts && st.route !== "direct" ? [["mounts", `Make the ${plural(st.mounts, "mount")}`]] : []),
                   ...(go ? [["install", "Put the patch in your client" + (c.server_dbc ? " and the items on your server" : "")]] : [])];
     const cur = rows.findIndex(([s]) => s === j.step);
     $("#k-progress").replaceChildren(el("div", {class: "steps"}, rows.map(([s, words], i) => {
@@ -798,7 +965,8 @@ function renderKit() {
   if (last) {
     result.push(el("div", {class: "kit-note"}, `Last install ${when(last.time)}: ` +
       [...last.client, ...last.added.map(a => a.split(/[\\/]/).pop())].join(", ") +
-      (last.server.length ? `; server ${last.server.join(", ")}` : "") + ". Restart the worldserver, then log in."));
+      (last.server.length ? `; server ${last.server.join(", ")}` : "") + ". Restart the worldserver, then log in" +
+      (direct ? " with the x64 client." : ".")));
     for (const p of st.sql) result.push(el("div", {class: "kit-note sql"}, "Yours to do: apply the item SQL to your world database - ",
       el("code", {}, `SOURCE ${slash(p)};`), " ", el("button", {class: "copy", onclick: () => copy(`SOURCE ${slash(p)};`)}, "copy")));
   }
@@ -809,13 +977,18 @@ function renderKit() {
   $("#kit-state").textContent = running ? "…" : "";
   $("#kit-state").hidden = !running;
 
-  // advanced: the kit's own steps, each redoable
+  // advanced: the kit's own steps, each redoable (retail direct's run together every time)
+  $("#k-steps-title").textContent = direct ? "Retail direct's steps" : "The kit's steps";
+  $("#k-steps-note").textContent = direct ? "Install runs these every time (they take a minute or so); Build only stops " +
+    "before the install, so you can look at the patch and the SQL first." : "Install runs these for you. Redo one when you " +
+    "changed something by hand; Build only stops before the install. The kit draws a preview picture of each piece into " +
+    "the project's sheets folder.";
   $("#k-steps").replaceChildren(...st.steps.map(x => {
     const mark = running && j.step === x.step ? ["run", "…"] : x.ok === true ? ["ok", "✓"] : x.ok === false ? ["bad", "✗"] : ["", "•"];
     return el("div", {class: "srow", title: x.at ? `${x.ok ? "passed" : "failed"} ${x.at}` : "not run yet"},
       el("span", {class: mark[0]}, mark[1]),
       el("span", {}, x.step, " ", el("span", {class: "sw"}, x.words)),
-      x.step === "select" ? el("span") :
+      x.step === "select" || direct ? el("span") :
         el("button", {class: "redo", disabled: running, onclick: () => kitRun("rerun", x.step)}, "redo from here"));
   }));
   $("#k-open-sheets").hidden = !st.sheets;
@@ -839,6 +1012,14 @@ function wireKit() {
   $("#k-go").addEventListener("click", () => {
     const c = K.status.settings;
     const pl = K.status.plan || {};
+    if (K.status.route === "direct") {
+      if (confirm(`Install retail's own items into the x64 client - ${pl.adds ? `adding ${plural(pl.adds, "entry")} from the basket` :
+                  "the basket"}${pl.take_out ? `, taking out ${pl.take_out}` : ""}${pl.in_game ? ", keeping the rest of your game" : ""}:\n` +
+                  `${c.client_data}\n\nIt writes ${K.status.patch_name} (backing up the one it replaces - Undo puts it back) and ` +
+                  "the item SQL for your server, which you apply. It runs no SQL and leaves the server's dbc folder alone. Close WoW first."))
+        kitRun("go");
+      return;
+    }
     if (confirm(`Install into your client - ${pl.adds ? `adding ${plural(pl.adds, "entry")} from the basket` : "the basket"}` +
                 `${pl.take_out ? `, taking out ${pl.take_out}` : ""}${pl.in_game ? ", keeping the rest of your game" : ""}:\n${c.client_data}\n` +
                 (c.server_dbc ? `\nand add its items to the server's dbc files:\n${c.server_dbc}\n` :
@@ -905,11 +1086,20 @@ function collectionShows(slot, row, id) {
   const groups = (S.meta.item_geosets || {})[slot] || [], i = groups.indexOf(Math.floor(id / 100));
   return i >= 0 && id % 100 === 1 + ((row && row.attachment_geosets[i]) || 0);
 }
+// A model of its own (a helm, shoulders, a buckle) shows its slot's groups at 1 + its AttachmentGeosetGroup
+// value, or at 1 + the display's GeosetGroupOverride when that is higher (the Heroic and Mythic tier looks
+// whose bigger x02 parts show - as the kit builds them); everything else in it draws.
+function attachedShows(slot, row, id) {
+  const groups = (S.meta.item_geosets || {})[slot] || [], i = groups.indexOf(Math.floor(id / 100));
+  if (id < 100 || i < 0 || !row) return true;
+  const agg = row.attachment_geosets[i] || 0;
+  return agg < 0 || id % 100 === 1 + Math.max(agg, row.geoset_override || 0);
+}
 function textureThumb(source) {
   return t => el("a", {href: `/tex/${source}/${t.fdid}.png`, target: "_blank", title: `${t.name} · ${t.fdid}`},
     el("img", {src: `/tex/${source}/${t.fdid}.png`, loading: "lazy", alt: t.name}), el("span", {}, t.name));
 }
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const plural = (n, word) => n === 1 ? `${n} ${word}` : /[^aeiou]y$/.test(word) ? `${n} ${word.slice(0, -1)}ies` : `${n} ${word}s`;
 
 // The preview box: the canvas; under it one row of controls - race and sex, then the versions or the
 // ◀ ▶ arrows (add(...) puts them there) - then what's shown and the body textures. load(fn) shows
@@ -961,7 +1151,8 @@ function loadDisplay(pb, display, slot, from = null) {
       for (const m of p.models) {
         // shoulders: the left one (position 0) on the wearer's left (+Y), the right one on the right
         const offset = slot === 3 && m.position >= 0 ? [0, m.position === 0 ? 0.21 : -0.21, 0] : [0, 0, 0];
-        v.add(m.mesh, {texUrl: texUrl(source), offset, visible: m.type === 1 ? id => collectionShows(slot, p.row, id) : undefined});
+        v.add(m.mesh, {texUrl: texUrl(source), offset,
+                       visible: id => (m.type === 1 ? collectionShows : attachedShows)(slot, p.row, id)});
       }
       v.fit(HELD.includes(slot) ? "held" : "front", slot);
       v.canvas.hidden = !p.models.length;
@@ -1091,7 +1282,7 @@ async function dress(v, pieces, token, from = null) {
     if (m.type === 1) {
       v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, visible: id => collectionShows(slot, pc.row, id)});
     } else if (m.attach >= 0) {
-      v.add(m.mesh, {texUrl: texUrl(source), attach: {part: bodyPart, id: m.attach}});
+      v.add(m.mesh, {texUrl: texUrl(source), attach: {part: bodyPart, id: m.attach}, visible: id => attachedShows(slot, pc.row, id)});
     }
     models++;
   }
@@ -1121,7 +1312,7 @@ function characterSection(pieces) {
 }
 
 // ---------------------------------------------------------------------------- views & wiring
-const BROWSE = ["items", "sets"];
+const BROWSE = ["items", "sets", "mounts"];
 function show(view) {
   S.view = view;
   $$(".nav[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
@@ -1131,14 +1322,16 @@ function show(view) {
     S.reopen = S.open; closeDrawer();
   } else if (BROWSE.includes(view) && !open && S.reopen) {
     const o = S.reopen; S.reopen = null;
-    o.kind === "item" ? openItem(o.id) : openSet(o.id, o.kind === "itemset" ? "itemset" : "transmog");
+    reopen(o);
   }
-  if (BROWSE.includes(view)) $(view === "sets" ? "#set-filters" : "#item-filters").prepend($(".search"));
+  if (BROWSE.includes(view)) $(view === "sets" ? "#set-filters" : view === "mounts" ? "#mount-filters" : "#item-filters").prepend($(".search"));
   if (view === "basket") renderBasket();
   if (view === "backport") loadKit();
   if (view === "settings") openSettings();
   if (view === "stats") loadStats();
-  $("#q").placeholder = view === "sets" ? "Search sets by name, version or group   ( / )" : "Search items by name or id   ( / )";
+  $("#q").placeholder = view === "sets" ? "Search sets by name, version or group   ( / )" :
+    view === "mounts" ? "Search mounts by name, spell or id   ( / )" : "Search items by name or id   ( / )";
+  if (view === "mounts" && !$("#mount-grid").children.length) searchMounts(true);
 }
 function fill(sel, entries) {
   const s = $(sel);
@@ -1158,9 +1351,16 @@ async function init() {
   try { S.basket = await api("/api/basket"); } catch (e) { S.basket = []; }
   $("#basket-count").textContent = S.basket.length;
 
-  const run = debounce(() => (S.view === "sets" ? searchSets(true) : searchItems(true)), 250);
+  const search = () => (S.view === "sets" ? searchSets(true) : S.view === "mounts" ? searchMounts(true) : searchItems(true));
+  const run = debounce(search, 250);
   $("#q").addEventListener("input", run);
-  $("#q").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); S.view === "sets" ? searchSets(true) : searchItems(true); } });
+  $("#q").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); search(); } });
+  $$("#mount-filters .seg button").forEach(b => b.addEventListener("click", () => {
+    S.mounts.kind = b.dataset.kind;
+    $$("#mount-filters .seg button").forEach(x => x.classList.toggle("on", x === b));
+    searchMounts(true);
+  }));
+  $("#m-junk").addEventListener("change", () => searchMounts(true));
   $$("#item-filters select, #item-filters input").forEach(c => c.addEventListener("change", () => searchItems(true)));
   $$("#set-filters select").forEach(c => c.addEventListener("change", () => searchSets(true)));
   $$("#set-filters .seg button").forEach(b => b.addEventListener("click", () => {
@@ -1171,13 +1371,15 @@ async function init() {
   }));
   $$(".nav[data-view]").forEach(b => b.addEventListener("click", () => {
     const was = S.view; show(b.dataset.view);
-    if ($("#q").value && was !== b.dataset.view) (b.dataset.view === "sets" ? searchSets(true) : b.dataset.view === "items" ? searchItems(true) : null);
+    if ($("#q").value && was !== b.dataset.view) (b.dataset.view === "sets" ? searchSets(true) : b.dataset.view === "items" ? searchItems(true) :
+                                                  b.dataset.view === "mounts" ? searchMounts(true) : null);
   }));
   $("#item-more").addEventListener("click", () => { if (!S.items.loading) { S.items.page++; searchItems(false); } });
   $("#set-more").addEventListener("click", () => { if (!S.sets.loading) { S.sets.page++; searchSets(false); } });
+  $("#mount-more").addEventListener("click", () => { if (!S.mounts.loading) { S.mounts.page++; searchMounts(false); } });
   const auto = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting && !e.target.hidden) e.target.click(); }),
                                         {root: $("#main"), rootMargin: "400px"});
-  auto.observe($("#item-more")); auto.observe($("#set-more"));
+  auto.observe($("#item-more")); auto.observe($("#set-more")); auto.observe($("#mount-more"));
   $("#drawer-close").addEventListener("click", () => { S.reopen = null; closeDrawer(); });
   document.addEventListener("keydown", e => {
     if (e.key === "Escape") closeDrawer();
