@@ -52,6 +52,29 @@ def test_a_displays_fourth_skin_is_named_for_the_x64_clients_table():
     assert MT.skin_table([MT.Ride(1, "Horse", "ground", 7, 250124, 990002, "x.mdx", ["skin", "", "", ""])]) is None
 
 
+def test_a_state_kits_models_are_taken_with_their_placement_and_the_rest_left_out():
+    t = {"SpellVisualKitEffect": [(1, {"EffectType": 2, "Effect": 10, "ParentSpellVisualKitID": 500}),
+                                  (2, {"EffectType": 2, "Effect": 11, "ParentSpellVisualKitID": 500}),
+                                  (3, {"EffectType": 2, "Effect": 12, "ParentSpellVisualKitID": 500}),
+                                  (4, {"EffectType": 16, "Effect": 77, "ParentSpellVisualKitID": 500})],
+         "SpellVisualKitModelAttach": [
+             (10, {"SpellVisualEffectNameID": 20, "AttachmentID": 0xFFFFFFFF, "Scale": 0.5, "Offset": [0.1, 0, 0.2],
+                   "Yaw": 1.5, "Pitch": 0, "Roll": 0, "AnimID": 0xFFFF, "StartAnimID": 158, "EndAnimID": 0xFFFF}),
+             (11, {"SpellVisualEffectNameID": 21, "AttachmentID": 16, "Scale": 0, "PositionerID": 9}),
+             (12, {"SpellVisualEffectNameID": 20, "AttachmentID": 17, "Scale": 1, "ScaleVariation": 0.2})],
+         "SpellVisualEffectName": [(20, {"ModelFileDataID": 9001, "Scale": 2.0, "Alpha": 0.75}),
+                                   (21, {"ModelFileDataID": 9002, "Scale": 1.0})]}
+    got = MT.state_attachments(t)
+    # one model: the positioned one and the randomly scaled one are left out, the gradient isn't a model
+    assert got == {500: [{"model": 9001, "attachment": 255, "scale": 1.0, "alpha": 0.75, "offset": [0.1, 0.0, 0.2],
+                          "rotation": [1.5, 0.0, 0.0], "anim": 0, "start": 158, "end": -1}]}
+    r = MT.Ride(1, "Ghost", "flying", 7, 250125, 990003, "x.mdx", ["", "", "", ""],
+                state=[dict(got[500][0], path="creature\\retroport\\spells\\ghost_state.m2")])
+    assert MT.state_table([r]).decode().splitlines()[1:] == [
+        "250125\tattach\t255\tcreature\\retroport\\spells\\ghost_state.m2\t1\t0.75\t0.1,0,0.2\t1.5,0,0\t0\t158\t-1"]
+    assert MT.state_table([MT.Ride(1, "Horse", "ground", 7, 250124, 990002, "x.mdx", ["", "", "", ""])]) is None
+
+
 def test_a_mount_flies_when_one_of_its_capabilities_does():
     assert MT.mount_kind([{"Flags": 29}, {"Flags": 7}]) == "flying"
     assert MT.mount_kind([{"Flags": 29}, None]) == "ground"

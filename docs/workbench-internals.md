@@ -398,6 +398,17 @@ Placeholders ("[PH] ...") count only with the page's test-mounts box, or when it
   which the x64 client's ReplaceMonsterSkin reads (retail tree `WXL/modules/retail-models/DisplaySkins.cpp`);
   the file goes beside the other skins. A stock client draws without it. Direct carries it as a made
   file (`Files.made`);
+- a state kit (CreatureDisplayInfo.StateSpellVisualKitID: 57 of retail's mount displays - a war
+  mount's banner, a spectral mount's mist, a fish's whiskers): `mounts.state_attachments` reads the
+  models it attaches (SpellVisualKitEffect type 2 -> SpellVisualKitModelAttach ->
+  SpellVisualEffectName; scale = the attach row's times the effect's, as the client's item kits take
+  it; one placed by a positioner, varied at random, or swapping a texture or dissolving is left out)
+  into the catalog's display (`state`); the direct route packs those models with the mount's own files
+  and `mounts.state_table` lists them in `DBFilesClient\WxlCreatureDisplayStates.txt` (a line a model:
+  display, "attach", attachment (255: none), path, scale, alpha, offset, yaw/pitch/roll, animation,
+  start, end), which the x64 client's ReplaceMonsterSkin reads (retail tree
+  `WXL/modules/retail-models/DisplayStates.cpp`). The kit route leaves them out. A kit's gradient and
+  dissolve shading are not carried yet;
 - CreatureModelData - the stock row of the same model stem (an old mount), else the kind's
   (RidingHorse / DrakeMount) for footprints and blood, with retail's size fields and
   ModelName `creature\retroport\...\<stem>.mdx`;

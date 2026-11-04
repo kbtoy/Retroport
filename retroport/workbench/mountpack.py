@@ -196,6 +196,7 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
     want = set()
     for _row, _d, dd in rows:
         want |= {dd.get("model") or 0, *(dd.get("textures") or [])}
+        want |= {st.get("model") or 0 for st in dd.get("state") or []}
         csd = (snd.get("rows") or {}).get(str(dd.get("sound") or 0)) or {}
         kits = set(csd.get("kits", {}).values())
         for _t, a, b in (snd.get("footsteps") or {}).get(str(csd.get("footstep") or 0), []):
@@ -281,7 +282,11 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                              int(row[MT.F["quality"]] if row[MT.F["quality"]] is not None else 4), item_display,
                              template, {"model": model, "textures": tex, "texture_ids": tex_ids,
                                         "icon": icon_fdid, "names": names},
-                             item_icon=item_icon, item_template=stock_item))
+                             item_icon=item_icon, item_template=stock_item,
+                             state=[dict(s) for s in dd.get("state") or [] if s.get("model") in names]))
+        if dd.get("state"):
+            notes.append(f"{name}: retail attaches {len(dd['state'])} model(s) to it - for the x64 client"
+                         + (" (the converter route leaves them out)" if route == "kit" else ""))
         sound_of[got["id"]] = dd.get("sound") or 0
     if not rides:
         raise ValueError("none of the mounts could be made")
@@ -312,6 +317,9 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
     skins = MT.skin_table(rides)
     if skins:
         out.files[MT.SKIN_TABLE] = skins
+    states = MT.state_table(rides) if route != "kit" else None
+    if states:
+        out.files[MT.STATE_TABLE] = states
     heard = sum(1 for r in rides if r.sound_kits)
     say(f"   sounds: {heard} of {len(rides)} mount(s) with retail's ({len(sounds.kits)} sound kits, "
         f"{len(sound_files)} files, footsteps for {len({row[1] for row in sounds.footsteps})} new kind(s) of feet)")
@@ -412,7 +420,7 @@ def _direct_files(out: Built, r: MT.Ride, source, listfile: str) -> None:
     the display's skins in the model's folder under the names CreatureDisplayInfo gives them."""
     model = r.retail["model"]
     files, owner = {}, {}
-    queue = [(model, "model", None)]
+    queue = [(model, "model", None)] + [(s["model"], "model", None) for s in r.state]
     while queue:
         fdid, kind, by = queue.pop()
         if fdid in files:
@@ -442,6 +450,12 @@ def _direct_files(out: Built, r: MT.Ride, source, listfile: str) -> None:
         fdid = r.retail["texture_ids"][slot]
         out.files[path] = fdid
         out.paths.setdefault(fdid, ("texture", path))
+    # the state kit's models where they went (their files are among the model's)
+    for s in r.state:
+        got = out.paths.get(s["model"])
+        s["path"] = os.path.splitext(got[1])[0] + ".m2" if got and files.get(s["model"]) else ""
+        if not s["path"]:
+            out.notes.append(f"{r.name}: a model its state kit attaches (FileDataID {s['model']}) isn't readable - left out")
 
 
 # -- the kit route's patch ------------------------------------------------------------------------

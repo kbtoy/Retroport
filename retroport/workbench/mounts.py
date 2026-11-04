@@ -38,10 +38,11 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 SOURCE_TABLES = ("Mount", "MountXDisplay", "MountTypeXCapability", "MountCapability", "CreatureDisplayInfo",
                  "CreatureModelData", "CreatureDisplayInfoGeosetData", "SpellMisc", "ItemEffect", "ItemXItemEffect",
-                 "ItemSearchName", "CreatureSoundData", "FootstepTerrainLookup", "SoundKit", "SoundKitEntry")
+                 "ItemSearchName", "CreatureSoundData", "FootstepTerrainLookup", "SoundKit", "SoundKitEntry",
+                 "SpellVisualKitEffect", "SpellVisualKitModelAttach", "SpellVisualEffectName")
 SOURCES = {0: "Drop", 1: "Quest", 2: "Vendor", 3: "Profession", 4: "Pet battle", 5: "Achievement", 6: "World event",
            7: "Promotion", 8: "Trading card game", 9: "Shop", 10: "Discovery", 11: "Trading Post"}
 KINDS = ("ground", "flying")
@@ -66,6 +67,12 @@ FOLDER = "creature\\retroport\\"            # every mount file goes under it: no
 # CreatureDisplayInfo names its three); a stock client has no use for it.
 SKIN_TABLE = "DBFilesClient\\WxlCreatureDisplaySkins.txt"
 SKIN_TYPES = (11, 12, 13, 5)                # the model texture type each of a display's skins goes on
+# A display's state kit (CreatureDisplayInfo.StateSpellVisualKitID: the banner a war mount carries, a
+# spectral mount's ghostly mist, a fish's whiskers) - the models it attaches, for the x64 client
+# (retail-models DisplayStates.cpp): a line a model, "display<TAB>attach<TAB>attachment<TAB>model
+# path<TAB>scale<TAB>alpha<TAB>x,y,z offset<TAB>yaw,pitch,roll<TAB>animation<TAB>start<TAB>end"
+# (-1: none). Its gradient and dissolve shading are not in it yet.
+STATE_TABLE = "DBFilesClient\\WxlCreatureDisplayStates.txt"
 ID_BASE, ITEM_BASE = 250000, 990000
 
 # Spell.dbc (3.3.5, 234 fields - spell_dbc's columns in order)
@@ -250,6 +257,7 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
     geosets: dict[int, list] = {}
     for _i, r in t["CreatureDisplayInfoGeosetData"]:
         geosets.setdefault(r["CreatureDisplayInfoID"], []).append([r["GeosetIndex"], r["GeosetValue"]])
+    kit_models = state_attachments(t)
 
     mounts, displays = [], {}
     for mid, r in t["Mount"]:
@@ -275,10 +283,75 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
                                                                 "MountHeight", "GeoBox", "WorldEffectScale",
                                                                 "AttachedEffectScale", "MissileCollisionRadius",
                                                                 "MissileCollisionPush", "MissileCollisionRaise")},
-                           "sound": c.get("SoundID") or m.get("SoundID") or 0}
+                           "sound": c.get("SoundID") or m.get("SoundID") or 0,
+                           "state": kit_models.get(c.get("StateSpellVisualKitID") or 0, [])}
     sounds = sound_bundle(t, {v["sound"] for v in displays.values() if v["sound"]})
     log(f"{src.spec.label}: {len(mounts)} mounts, {len(sounds['kits'])} sound kits ({time.time() - t0:.0f} s)")
     return MountCatalog(src.key, src.build, mounts, displays, sounds)
+
+
+def state_attachments(t: dict[str, list]) -> dict[int, list[dict]]:
+    """The models each spell-visual kit attaches (SpellVisualKitEffect type 2 ->
+    SpellVisualKitModelAttach -> SpellVisualEffectName), as a state kit holds them: {kit: [{"model":
+    FileDataID, "attachment", "scale" (the attach row's times the effect's, each 1 when unset - as the
+    client's item kits take it), "alpha", "offset", "rotation" (yaw, pitch, roll), "anim", "start",
+    "end" (-1: none)}]}. Left out: one placed by a positioner or varied at random, and one that swaps
+    the model's texture or dissolves it - drawn otherwise in retail."""
+    names = {i: r for i, r in t.get("SpellVisualEffectName") or []}
+    attach = {i: r for i, r in t.get("SpellVisualKitModelAttach") or []}
+
+    def num(v, k=None):
+        if isinstance(v, (list, tuple)):
+            v = v[k] if k is not None and k < len(v) else (v[0] if v else 0)
+        return float(v or 0.0)
+
+    def anim(v) -> int:
+        v = int(v or 0)
+        return -1 if v in (0xFFFF, 0xFFFFFFFF, -1) else v
+
+    out: dict[int, list[dict]] = {}
+    for _i, e in t.get("SpellVisualKitEffect") or []:
+        if e.get("EffectType") != 2:
+            continue
+        a = attach.get(e.get("Effect") or 0)
+        n = names.get((a or {}).get("SpellVisualEffectNameID") or 0)
+        if not a or not n or not n.get("ModelFileDataID"):
+            continue
+        if a.get("PositionerID") or n.get("TextureFileDataID") or n.get("DissolveEffectID"):
+            continue
+        if any(num(a.get(k)) for k in ("YawVariation", "PitchVariation", "RollVariation", "ScaleVariation")):
+            continue
+        if any(num(a.get("OffsetVariation"), k) for k in range(3)):
+            continue
+        first, second = num(a.get("Scale")), num(n.get("Scale"))
+        scale = (first if first > 0 else 1.0) * (second if second > 0 else 1.0)
+        alpha = num(n.get("Alpha"))
+        main = anim(a.get("AnimID"))
+        out.setdefault(e.get("ParentSpellVisualKitID") or 0, []).append({
+            "model": n["ModelFileDataID"], "attachment": int(a.get("AttachmentID") or 0) & 0xFF,
+            "scale": round(scale, 6), "alpha": round(alpha if 0 < alpha <= 1 else 1.0, 6),
+            "offset": [round(num(a.get("Offset"), k), 6) for k in range(3)],
+            "rotation": [round(num(a.get(k)), 6) for k in ("Yaw", "Pitch", "Roll")],
+            "anim": main if main >= 0 else 0, "start": anim(a.get("StartAnimID")), "end": anim(a.get("EndAnimID"))})
+    return out
+
+
+def state_table(rides: list[Ride]) -> bytes | None:
+    """``STATE_TABLE`` for ``rides``: each display's state-kit models (None when none has one)."""
+    lines = []
+    for r in rides:
+        for s in r.state:
+            if not s.get("path"):
+                continue
+            lines.append("\t".join([str(r.id), "attach", str(s["attachment"]), s["path"], f"{s['scale']:g}",
+                                    f"{s['alpha']:g}", ",".join(f"{v:g}" for v in s["offset"]),
+                                    ",".join(f"{v:g}" for v in s["rotation"]), str(s["anim"]), str(s["start"]),
+                                    str(s["end"])]))
+    if not lines:
+        return None
+    return ("# display\tattach\tattachment (255: none)\tmodel\tscale\talpha\toffset\tyaw,pitch,roll\tanimation\t"
+            "start\tend - the models a display's retail state kit attaches (the x64 client)\r\n"
+            + "\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
 def sound_bundle(t: dict[str, list], rows: set[int]) -> dict:
@@ -510,6 +583,7 @@ class Ride:
     footstep: int | None = None                  # its CreatureFootstepID (None: the template's)
     item_icon: str = ""                          # the bag icon its own ItemDisplayInfo row shows
     item_template: list | None = None            # the stock mount item's ItemDisplayInfo row that row copies
+    state: list[dict] = field(default_factory=list)  # its state kit's models (``state_attachments``; "path" once placed)
 
 
 @dataclass
