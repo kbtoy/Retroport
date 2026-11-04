@@ -283,7 +283,11 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                              template, {"model": model, "textures": tex, "texture_ids": tex_ids,
                                         "icon": icon_fdid, "names": names},
                              item_icon=item_icon, item_template=stock_item,
-                             state=[dict(s) for s in dd.get("state") or [] if s.get("model") in names]))
+                             state=[dict(s) for s in dd.get("state") or [] if s.get("model") in names],
+                             gradient=dd.get("gradient") if route != "kit" else None))
+        if dd.get("gradient"):
+            notes.append(f"{name}: retail shades it with a gradient - for the x64 client"
+                         + (" (the converter route leaves it out)" if route == "kit" else ""))
         if dd.get("state"):
             notes.append(f"{name}: retail attaches {len(dd['state'])} model(s) to it - for the x64 client"
                          + (" (the converter route leaves them out)" if route == "kit" else ""))

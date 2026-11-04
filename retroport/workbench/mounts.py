@@ -38,11 +38,11 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-CATALOG_VERSION = 3
+CATALOG_VERSION = 4
 SOURCE_TABLES = ("Mount", "MountXDisplay", "MountTypeXCapability", "MountCapability", "CreatureDisplayInfo",
                  "CreatureModelData", "CreatureDisplayInfoGeosetData", "SpellMisc", "ItemEffect", "ItemXItemEffect",
                  "ItemSearchName", "CreatureSoundData", "FootstepTerrainLookup", "SoundKit", "SoundKitEntry",
-                 "SpellVisualKitEffect", "SpellVisualKitModelAttach", "SpellVisualEffectName")
+                 "SpellVisualKitEffect", "SpellVisualKitModelAttach", "SpellVisualEffectName", "GradientEffect")
 SOURCES = {0: "Drop", 1: "Quest", 2: "Vendor", 3: "Profession", 4: "Pet battle", 5: "Achievement", 6: "World event",
            7: "Promotion", 8: "Trading card game", 9: "Shop", 10: "Discovery", 11: "Trading Post"}
 KINDS = ("ground", "flying")
@@ -71,7 +71,9 @@ SKIN_TYPES = (11, 12, 13, 5)                # the model texture type each of a d
 # spectral mount's ghostly mist, a fish's whiskers) - the models it attaches, for the x64 client
 # (retail-models DisplayStates.cpp): a line a model, "display<TAB>attach<TAB>attachment<TAB>model
 # path<TAB>scale<TAB>alpha<TAB>x,y,z offset<TAB>yaw,pitch,roll<TAB>animation<TAB>start<TAB>end"
-# (-1: none). Its gradient and dissolve shading are not in it yet.
+# (-1: none); and its gradient shading (the spectral mounts' ghostly blue), a line
+# "display<TAB>gradient<TAB>low r,g,b<TAB>middle r,g,b<TAB>high r,g,b<TAB>middle value<TAB>rim power<TAB>edge
+# r,g,b<TAB>flags" (1: no height fade). Its dissolve is not in it yet.
 STATE_TABLE = "DBFilesClient\\WxlCreatureDisplayStates.txt"
 ID_BASE, ITEM_BASE = 250000, 990000
 
@@ -258,6 +260,7 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
     for _i, r in t["CreatureDisplayInfoGeosetData"]:
         geosets.setdefault(r["CreatureDisplayInfoID"], []).append([r["GeosetIndex"], r["GeosetValue"]])
     kit_models = state_attachments(t)
+    kit_gradients = state_gradients(t)
 
     mounts, displays = [], {}
     for mid, r in t["Mount"]:
@@ -284,7 +287,8 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
                                                                 "AttachedEffectScale", "MissileCollisionRadius",
                                                                 "MissileCollisionPush", "MissileCollisionRaise")},
                            "sound": c.get("SoundID") or m.get("SoundID") or 0,
-                           "state": kit_models.get(c.get("StateSpellVisualKitID") or 0, [])}
+                           "state": kit_models.get(c.get("StateSpellVisualKitID") or 0, []),
+                           "gradient": kit_gradients.get(c.get("StateSpellVisualKitID") or 0)}
     sounds = sound_bundle(t, {v["sound"] for v in displays.values() if v["sound"]})
     log(f"{src.spec.label}: {len(mounts)} mounts, {len(sounds['kits'])} sound kits ({time.time() - t0:.0f} s)")
     return MountCatalog(src.key, src.build, mounts, displays, sounds)
@@ -336,6 +340,27 @@ def state_attachments(t: dict[str, list]) -> dict[int, list[dict]]:
     return out
 
 
+def state_gradients(t: dict[str, list]) -> dict[int, dict]:
+    """The gradient effect each spell-visual kit shades its model with (SpellVisualKitEffect type 16 ->
+    GradientEffect; a kit's first): {kit: {"low", "middle", "high" (rgb), "split" (the middle value), "rim"
+    (the rim's power), "edge" (rgb), "flags" (1: no height fade)}}."""
+    rows = {i: r for i, r in t.get("GradientEffect") or []}
+    out: dict[int, dict] = {}
+    for _i, e in t.get("SpellVisualKitEffect") or []:
+        g = rows.get(e.get("Effect") or 0) if e.get("EffectType") == 16 else None
+        kit = e.get("ParentSpellVisualKitID") or 0
+        if not g or kit in out:
+            continue
+
+        def rgb(prefix):
+            return [round(float(g.get(f"{prefix}_{c}") or 0.0), 6) for c in "rgb"]
+        out[kit] = {"low": rgb("Colors0"), "middle": rgb("Colors1"), "high": rgb("Colors2"),
+                    "split": round(float(g.get("Alpha1?", g.get("Alpha1")) or 0.5), 6),
+                    "rim": round(float(g.get("Alpha2?", g.get("Alpha2")) or 1.0), 6), "edge": rgb("EdgeColor"),
+                    "flags": int(g.get("Field_8_1_0_28440_015") or 0)}
+    return out
+
+
 def state_table(rides: list[Ride]) -> bytes | None:
     """``STATE_TABLE`` for ``rides``: each display's state-kit models (None when none has one)."""
     lines = []
@@ -347,6 +372,12 @@ def state_table(rides: list[Ride]) -> bytes | None:
                                     f"{s['alpha']:g}", ",".join(f"{v:g}" for v in s["offset"]),
                                     ",".join(f"{v:g}" for v in s["rotation"]), str(s["anim"]), str(s["start"]),
                                     str(s["end"])]))
+        g = r.gradient
+        if g:
+            def rgb(v):
+                return ",".join(f"{x:g}" for x in v)
+            lines.append("\t".join([str(r.id), "gradient", rgb(g["low"]), rgb(g["middle"]), rgb(g["high"]),
+                                    f"{g['split']:g}", f"{g['rim']:g}", rgb(g["edge"]), str(g["flags"])]))
     if not lines:
         return None
     return ("# display\tattach\tattachment (255: none)\tmodel\tscale\talpha\toffset\tyaw,pitch,roll\tanimation\t"
@@ -584,6 +615,7 @@ class Ride:
     item_icon: str = ""                          # the bag icon its own ItemDisplayInfo row shows
     item_template: list | None = None            # the stock mount item's ItemDisplayInfo row that row copies
     state: list[dict] = field(default_factory=list)  # its state kit's models (``state_attachments``; "path" once placed)
+    gradient: dict | None = None                 # its state kit's gradient shading (``state_gradients``)
 
 
 @dataclass

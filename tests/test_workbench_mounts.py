@@ -75,6 +75,20 @@ def test_a_state_kits_models_are_taken_with_their_placement_and_the_rest_left_ou
     assert MT.state_table([MT.Ride(1, "Horse", "ground", 7, 250124, 990002, "x.mdx", ["", "", "", ""])]) is None
 
 
+def test_a_state_kits_gradient_is_listed_for_the_x64_client():
+    t = {"SpellVisualKitEffect": [(1, {"EffectType": 16, "Effect": 7, "ParentSpellVisualKitID": 600})],
+         "GradientEffect": [(7, {"Colors0_r": 0.0, "Colors0_g": 0.086, "Colors0_b": 0.22, "Colors1_r": 0.071,
+                                 "Colors1_g": 0.655, "Colors1_b": 0.769, "Colors2_r": 1, "Colors2_g": 1, "Colors2_b": 1,
+                                 "Alpha1": 0.5, "Alpha2": 0.9, "EdgeColor_r": 1, "EdgeColor_g": 1, "EdgeColor_b": 1,
+                                 "Field_8_1_0_28440_015": 2})]}
+    g = MT.state_gradients(t)[600]
+    assert g == {"low": [0.0, 0.086, 0.22], "middle": [0.071, 0.655, 0.769], "high": [1.0, 1.0, 1.0], "split": 0.5,
+                 "rim": 0.9, "edge": [1.0, 1.0, 1.0], "flags": 2}
+    r = MT.Ride(1, "Spectral", "flying", 7, 250126, 990004, "x.mdx", ["", "", "", ""], gradient=g)
+    assert MT.state_table([r]).decode().splitlines()[1:] == [
+        "250126\tgradient\t0,0.086,0.22\t0.071,0.655,0.769\t1,1,1\t0.5\t0.9\t1,1,1\t2"]
+
+
 def test_a_mount_flies_when_one_of_its_capabilities_does():
     assert MT.mount_kind([{"Flags": 29}, {"Flags": 7}]) == "flying"
     assert MT.mount_kind([{"Flags": 29}, None]) == "ground"
