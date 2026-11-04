@@ -197,6 +197,7 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
     for _row, _d, dd in rows:
         want |= {dd.get("model") or 0, *(dd.get("textures") or [])}
         want |= {st.get("model") or 0 for st in dd.get("state") or []}
+        want |= {layer.get("texture") or 0 for layer in (dd.get("dissolve") or {}).get("layers") or []}
         csd = (snd.get("rows") or {}).get(str(dd.get("sound") or 0)) or {}
         kits = set(csd.get("kits", {}).values())
         for _t, a, b in (snd.get("footsteps") or {}).get(str(csd.get("footstep") or 0), []):
@@ -285,7 +286,12 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                              item_icon=item_icon, item_template=stock_item,
                              state=[dict(s) for s in dd.get("state") or [] if s.get("model") in names],
                              gradient=dd.get("gradient") if route != "kit" else None,
+                             dissolve=(dict(dd["dissolve"], layers=[dict(layer) for layer in dd["dissolve"]["layers"]])
+                                       if dd.get("dissolve") and route != "kit" else None),
                              bank=dd.get("bank") if route != "kit" else None))
+        if dd.get("dissolve"):
+            notes.append(f"{name}: retail lays a dissolve over it - for the x64 client"
+                         + (" (the converter route leaves it out)" if route == "kit" else ""))
         if dd.get("gradient"):
             notes.append(f"{name}: retail shades it with a gradient - for the x64 client"
                          + (" (the converter route leaves it out)" if route == "kit" else ""))
@@ -461,6 +467,22 @@ def _direct_files(out: Built, r: MT.Ride, source, listfile: str) -> None:
         s["path"] = os.path.splitext(got[1])[0] + ".m2" if got and files.get(s["model"]) else ""
         if not s["path"]:
             out.notes.append(f"{r.name}: a model its state kit attaches (FileDataID {s['model']}) isn't readable - left out")
+    # the dissolve's layer textures: where the model's files put them, else in their own retail folders
+    layers = (r.dissolve or {}).get("layers") or []
+    named = RP.listfile_names(listfile, {layer["texture"] for layer in layers if layer.get("texture")})
+    for layer in layers:
+        fdid = layer.get("texture") or 0
+        got = out.paths.get(fdid)
+        if got:
+            layer["path"] = got[1]
+        elif fdid in named:
+            layer["path"] = MT.relocate(named[fdid])
+            out.paths[fdid] = ("texture", layer["path"])
+            out.files[layer["path"]] = fdid
+        else:
+            layer["path"] = ""
+            if fdid:
+                out.notes.append(f"{r.name}: a texture its dissolve lays over it (FileDataID {fdid}) has no name - left out")
 
 
 # -- the kit route's patch ------------------------------------------------------------------------

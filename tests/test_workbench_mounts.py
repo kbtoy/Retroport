@@ -89,6 +89,37 @@ def test_a_state_kits_gradient_is_listed_for_the_x64_client():
         "250126\tgradient\t0,0.086,0.22\t0.071,0.655,0.769\t1,1,1\t0.5\t0.9\t1,1,1\t2"]
 
 
+def test_a_state_kits_dissolve_is_listed_with_its_layers_for_the_x64_client():
+    t = {"SpellVisualKitEffect": [(1, {"EffectType": 11, "Effect": 2462, "ParentSpellVisualKitID": 700}),
+                                  (2, {"EffectType": 11, "Effect": 9999, "ParentSpellVisualKitID": 701})],
+         "DissolveEffect": [(2462, {"Ramp": 0.1, "StartValue": 0.0, "EndValue": 1.0, "FadeInTime": 0.05, "ProjectionType": 4,
+                                    "TextureBlendSetID": 1760, "Scale": 1.0, "Flags": 8207, "FresnelIntensity": 0.4,
+                                    "Field_9_1_5_40496_014": 0.0431, "Field_9_1_5_40496_015": 0.0471,
+                                    "Field_9_1_5_40496_016": 0.2353, "Field_9_1_5_40496_017": 1.0,
+                                    "Field_9_1_5_40496_018": 1.1})],
+         "TextureBlendSet": [(1760, {"TextureFileDataID": [3025380, 6692906, 0], "TextureScaleU": [1.0, 1.0, 2.0],
+                                     "TextureScaleV": [0.25, 0.25, 0.5], "TextureScrollRateU": [0.1, -0.04, 0.08],
+                                     "TextureScrollRateV": [-0.1, -0.05, 0.08], "ModX": [0.72, 0.65, 1.1, 1.0]})]}
+    got = MT.state_dissolves(t)
+    # the kit whose dissolve row is missing has none
+    assert list(got) == [700]
+    d = got[700]
+    assert (d["projection"], d["ramp"], d["start"], d["end"], d["fade"], d["flags"], d["fresnel"]) == (4, 0.1, 0.0, 1.0, 0.05, 8207, 0.4)
+    assert d["tint"] == [0.0431, 0.0471, 0.2353, 1.0] and d["intensity"] == 1.1 and d["modx"] == [0.72, 0.65, 1.1, 1.0]
+    assert [layer["texture"] for layer in d["layers"]] == [3025380, 6692906, 0]
+    assert d["layers"][2] == {"texture": 0, "scale": [2.0, 0.5], "scroll": [0.08, 0.08]}
+    d["layers"][0]["path"] = "creature\\retroport\\fx\\a.blp"
+    d["layers"][1]["path"] = "creature\\retroport\\fx\\b.blp"
+    r = MT.Ride(1, "Void-Scarred Gryphon", "flying", 7, 250129, 990007, "x.mdx", ["", "", "", ""], dissolve=d)
+    assert MT.state_table([r]).decode().splitlines()[1:] == [
+        "250129\tdissolve\t4\t0.1\t0,1,0.05\t8207\t0.4\t0.0431,0.0471,0.2353,1\t1.1\t0.72,0.65,1.1,1\t1"
+        "\tcreature\\retroport\\fx\\a.blp\t1,0.25,0.1,-0.1\tcreature\\retroport\\fx\\b.blp\t1,0.25,-0.04,-0.05\t-\t2,0.5,0.08,0.08"]
+    # a dissolve none of whose layers was placed is left out
+    for layer in d["layers"]:
+        layer["path"] = ""
+    assert MT.state_table([r]) is None
+
+
 def test_a_mount_flies_when_one_of_its_capabilities_does():
     assert MT.mount_kind([{"Flags": 29}, {"Flags": 7}]) == "flying"
     assert MT.mount_kind([{"Flags": 29}, None]) == "ground"
@@ -705,4 +736,4 @@ def test_retail_direct_undo_leaves_an_archive_another_install_replaced(tmp_path,
 def test_a_mounts_banking_angle_is_listed_only_where_it_is_not_retails_usual():
     r20 = MT.Ride(1, "Blanchy", "ground", 7, 250127, 990005, "x.mdx", ["", "", "", ""], bank=20.0)
     r45 = MT.Ride(2, "Gryphon", "flying", 8, 250128, 990006, "y.mdx", ["", "", "", ""], bank=45.0)
-    assert MT.state_table([r20, r45]).decode().splitlines()[1:] == ["250127	bank	20"]
+    assert MT.state_table([r20, r45]).decode().splitlines()[1:] == ["250127\tbank\t20"]

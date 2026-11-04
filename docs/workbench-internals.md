@@ -407,8 +407,14 @@ Placeholders ("[PH] ...") count only with the page's test-mounts box, or when it
   and `mounts.state_table` lists them in `DBFilesClient\WxlCreatureDisplayStates.txt` (a line a model:
   display, "attach", attachment (255: none), path, scale, alpha, offset, yaw/pitch/roll, animation,
   start, end), which the x64 client's ReplaceMonsterSkin reads (retail tree
-  `WXL/modules/retail-models/DisplayStates.cpp`). The kit route leaves them out. A kit's gradient and
-  dissolve shading are not carried yet;
+  `WXL/modules/retail-models/DisplayStates.cpp`). The kit route leaves them out. The same table carries
+  the kit's gradient (`mounts.state_gradients`: GradientEffect, a "gradient" line), the display's
+  MountMaxBankingAngle where it isn't retail's usual 45 (a "bank" line) and the kit's dissolve
+  (`mounts.state_dissolves`: SpellVisualKitEffect type 11 -> DissolveEffect -> TextureBlendSet; a
+  "dissolve" line - projection, ramp, start/end/fade-in, flags, fresnel, tint, intensity, ModX, scale,
+  then each of three layers' path and scale/scroll), whose three layer textures the direct route packs
+  in their own retail folders under `creature\retroport\`. The client draws only the dissolves with flag
+  0x2000 (the Void mounts');
 - CreatureModelData - the stock row of the same model stem (an old mount), else the kind's
   (RidingHorse / DrakeMount) for footprints and blood, with retail's size fields and
   ModelName `creature\retroport\...\<stem>.mdx`;

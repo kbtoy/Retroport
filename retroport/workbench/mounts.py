@@ -38,11 +38,12 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-CATALOG_VERSION = 5
+CATALOG_VERSION = 6
 SOURCE_TABLES = ("Mount", "MountXDisplay", "MountTypeXCapability", "MountCapability", "CreatureDisplayInfo",
                  "CreatureModelData", "CreatureDisplayInfoGeosetData", "SpellMisc", "ItemEffect", "ItemXItemEffect",
                  "ItemSearchName", "CreatureSoundData", "FootstepTerrainLookup", "SoundKit", "SoundKitEntry",
-                 "SpellVisualKitEffect", "SpellVisualKitModelAttach", "SpellVisualEffectName", "GradientEffect")
+                 "SpellVisualKitEffect", "SpellVisualKitModelAttach", "SpellVisualEffectName", "GradientEffect",
+                 "DissolveEffect", "TextureBlendSet")
 SOURCES = {0: "Drop", 1: "Quest", 2: "Vendor", 3: "Profession", 4: "Pet battle", 5: "Achievement", 6: "World event",
            7: "Promotion", 8: "Trading card game", 9: "Shop", 10: "Discovery", 11: "Trading Post"}
 KINDS = ("ground", "flying")
@@ -75,7 +76,10 @@ SKIN_TYPES = (11, 12, 13, 5)                # the model texture type each of a d
 # "display<TAB>gradient<TAB>low r,g,b<TAB>middle r,g,b<TAB>high r,g,b<TAB>middle value<TAB>rim power<TAB>edge
 # r,g,b<TAB>flags" (1: no height fade); and how far it banks into a turn while flying where that is not
 # retail's usual 45 degrees (CreatureDisplayInfo.MountMaxBankingAngle; 20 on 38 mounts), a line
-# "display<TAB>bank<TAB>degrees". Its dissolve is not in it yet.
+# "display<TAB>bank<TAB>degrees"; and its dissolve (the Void-Scarred mounts' scrolling blue), a line
+# "display<TAB>dissolve<TAB>projection<TAB>ramp<TAB>start,end,fade-in<TAB>flags<TAB>fresnel<TAB>tint
+# r,g,b,a<TAB>intensity<TAB>ModX r,g,b,a<TAB>scale" and then for each of its three layers "path<TAB>scale u,v,
+# scroll u,v" ("-": no texture).
 STATE_TABLE = "DBFilesClient\\WxlCreatureDisplayStates.txt"
 ID_BASE, ITEM_BASE = 250000, 990000
 
@@ -263,6 +267,7 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
         geosets.setdefault(r["CreatureDisplayInfoID"], []).append([r["GeosetIndex"], r["GeosetValue"]])
     kit_models = state_attachments(t)
     kit_gradients = state_gradients(t)
+    kit_dissolves = state_dissolves(t)
 
     mounts, displays = [], {}
     for mid, r in t["Mount"]:
@@ -291,6 +296,7 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
                            "sound": c.get("SoundID") or m.get("SoundID") or 0,
                            "state": kit_models.get(c.get("StateSpellVisualKitID") or 0, []),
                            "gradient": kit_gradients.get(c.get("StateSpellVisualKitID") or 0),
+                           "dissolve": kit_dissolves.get(c.get("StateSpellVisualKitID") or 0),
                            "bank": c.get("MountMaxBankingAngle")}
     sounds = sound_bundle(t, {v["sound"] for v in displays.values() if v["sound"]})
     log(f"{src.spec.label}: {len(mounts)} mounts, {len(sounds['kits'])} sound kits ({time.time() - t0:.0f} s)")
@@ -364,6 +370,45 @@ def state_gradients(t: dict[str, list]) -> dict[int, dict]:
     return out
 
 
+def state_dissolves(t: dict[str, list]) -> dict[int, dict]:
+    """The dissolve each spell-visual kit lays over its model (SpellVisualKitEffect type 11 -> DissolveEffect,
+    its TextureBlendSet's three layers; a kit's first): {kit: {"projection" (how the layers wrap the model:
+    0-2 flat on two of its axes, 3-5 round one, 6 slanted, 7 its first UV set, 8 its second), "ramp", "start",
+    "end", "fade" (in, seconds), "flags", "fresnel", "tint" (rgba), "intensity", "modx" (rgba), "scale",
+    "layers": [{"texture" (FileDataID, 0: none), "scale" (u, v), "scroll" (u, v a second)}] x 3}}."""
+    rows = {i: r for i, r in t.get("DissolveEffect") or []}
+    sets = {i: r for i, r in t.get("TextureBlendSet") or []}
+
+    def num(r, key, default=0.0):
+        v = r.get(key, r.get(key + "?"))
+        return round(float(v if v is not None else default), 6)
+
+    def at(v, k, default=0.0):
+        v = list(v) if isinstance(v, (list, tuple)) else [v]
+        return round(float(v[k] if k < len(v) and v[k] is not None else default), 6)
+
+    out: dict[int, dict] = {}
+    for _i, e in t.get("SpellVisualKitEffect") or []:
+        d = rows.get(e.get("Effect") or 0) if e.get("EffectType") == 11 else None
+        kit = e.get("ParentSpellVisualKitID") or 0
+        b = sets.get((d or {}).get("TextureBlendSetID") or 0)
+        if not d or not b or kit in out:
+            continue
+        textures = b.get("TextureFileDataID") or []
+        layers = [{"texture": int(at(textures, k)) if at(textures, k) > 0 else 0,
+                   "scale": [at(b.get("TextureScaleU"), k, 1.0), at(b.get("TextureScaleV"), k, 1.0)],
+                   "scroll": [at(b.get("TextureScrollRateU"), k), at(b.get("TextureScrollRateV"), k)]} for k in range(3)]
+        if not any(layer["texture"] for layer in layers):
+            continue
+        out[kit] = {"projection": int(d.get("ProjectionType") or 0), "ramp": num(d, "Ramp"), "start": num(d, "StartValue"),
+                    "end": num(d, "EndValue"), "fade": num(d, "FadeInTime"), "flags": int(d.get("Flags") or 0),
+                    "fresnel": num(d, "FresnelIntensity"),
+                    "tint": [num(d, f"Field_9_1_5_40496_0{k}", 1.0) for k in (14, 15, 16, 17)],
+                    "intensity": num(d, "Field_9_1_5_40496_018", 1.0), "modx": [at(b.get("ModX"), k, 1.0) for k in range(4)],
+                    "scale": num(d, "Scale", 1.0), "layers": layers}
+    return out
+
+
 def state_table(rides: list[Ride]) -> bytes | None:
     """``STATE_TABLE`` for ``rides``: each display's state-kit models (None when none has one)."""
     lines = []
@@ -383,6 +428,16 @@ def state_table(rides: list[Ride]) -> bytes | None:
                 return ",".join(f"{x:g}" for x in v)
             lines.append("\t".join([str(r.id), "gradient", rgb(g["low"]), rgb(g["middle"]), rgb(g["high"]),
                                     f"{g['split']:g}", f"{g['rim']:g}", rgb(g["edge"]), str(g["flags"])]))
+        d = r.dissolve
+        if d and any(layer.get("path") for layer in d["layers"]):
+            def vec(v):
+                return ",".join(f"{x:g}" for x in v)
+            fields = [str(r.id), "dissolve", str(d["projection"]), f"{d['ramp']:g}", vec([d["start"], d["end"], d["fade"]]),
+                      str(d["flags"]), f"{d['fresnel']:g}", vec(d["tint"]), f"{d['intensity']:g}", vec(d["modx"]),
+                      f"{d['scale']:g}"]
+            for layer in d["layers"]:
+                fields += [layer.get("path") or "-", vec(layer["scale"] + layer["scroll"])]
+            lines.append("\t".join(fields))
     if not lines:
         return None
     return ("# display\tattach\tattachment (255: none)\tmodel\tscale\talpha\toffset\tyaw,pitch,roll\tanimation\t"
@@ -621,6 +676,7 @@ class Ride:
     item_template: list | None = None            # the stock mount item's ItemDisplayInfo row that row copies
     state: list[dict] = field(default_factory=list)  # its state kit's models (``state_attachments``; "path" once placed)
     gradient: dict | None = None                 # its state kit's gradient shading (``state_gradients``)
+    dissolve: dict | None = None                 # its state kit's dissolve (``state_dissolves``; layers' "path" once placed)
     bank: float | None = None                    # retail's MountMaxBankingAngle (degrees; 45 the usual)
 
 
