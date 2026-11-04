@@ -372,3 +372,34 @@ def test_check_in_the_client_reads_the_installed_models(tmp_path, monkeypatch):
     cc = d.built_record()["summary"]["client_check"]
     assert cc["failed"] and cc["same"] == cc["models"] - 1
     assert any("not read" in line for line in d.lines) and any("LOAD FAILED" in line for line in d.lines)
+
+
+def _md20_model(skins: list[int], texture: int, profiles: int) -> bytes:
+    def chunk(magic, payload):
+        return magic + struct.pack("<I", len(payload)) + payload
+    body = b"MD20" + b"\0" * 64 + struct.pack("<I", profiles) + b"\0" * 8      # numSkinProfiles at 68
+    return chunk(b"MD21", body) + chunk(b"SFID", struct.pack(f"<{len(skins)}I", *skins)) + \
+        chunk(b"TXID", struct.pack("<I", texture))
+
+
+def test_a_models_skin_profiles_and_the_name_the_client_opens():
+    data = _md20_model([11, 12, 13, 14, 15], 948080, 2)                     # two profiles, then LOD skins
+    assert RP.skin_profiles(data) == [11, 12]
+    assert RP.skin_name("item\\objectcomponents\\head\\helm_x.m2", 1) == "item\\objectcomponents\\head\\helm_x01.skin"
+    assert RP.skin_profiles(b"MD20....") == []
+
+
+def test_a_skin_another_model_shares_goes_in_under_this_ones_name_too(tmp_path, monkeypatch):
+    # retail draws the Ethereal warlock cloth with its belt's skin (one mesh, the belt's name)
+    monkeypatch.setitem(LISTFILE, 7321901, "item/objectcomponents/head/helm_cloth_y_be_m00.skin")
+    d = _direct(tmp_path, monkeypatch)
+    d.source.files[HEAD] = _md20_model([7321901], 948080, 1)
+    d.source.files[7321901] = b"SKINshared"
+    assert d.go(BASKET, PLAN, False)
+    m = MPQ(os.path.join(d.work, "out", RP.PATCH))
+    try:
+        assert m.read("item\\objectcomponents\\head\\helm_cloth_y_be_m00.skin") == b"SKINshared"
+        assert m.read("item\\objectcomponents\\head\\helm_cloth_x_be_m00.skin") == b"SKINshared"    # the client's name
+    finally:
+        m.close()
+    assert any("checked: every file the client opens" in line for line in d.lines)

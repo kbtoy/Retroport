@@ -411,6 +411,7 @@ class Direct:
             # the files: each display's models (every race and sex) and textures, each model's own
             # files, the icons
             files, owner, pairs, icons, shown = {}, {}, set(), set(), set()
+            profiles: dict[int, list[int]] = {}          # a model's skin profiles, by FileDataID
             queue = []
             visuals = 0
             for _item, display, look in looks:
@@ -437,6 +438,8 @@ class Direct:
                         continue
                     for f, k in RP.companions(data):
                         queue.append((f, k, fdid if kind == "model" else by))
+                    if kind == "model":
+                        profiles[fdid] = RP.skin_profiles(data)
             files = {f: k for f, k in files.items() if k}
             names = RP.listfile_names(self.listfile, files)
             paths = RP.place(files, owner, names, shown)
@@ -449,6 +452,13 @@ class Direct:
                 look = RP.model_look(p) if files[f] == "model" and p.endswith(".m2") else ""
                 if look and look != p:
                     aliases.append((look, f))
+                # its skin profiles under its own name, where retail keeps them in another model's
+                # (the client opens <model>NN.skin; a converter run does too)
+                for at in dict.fromkeys(x for x in (p, look) if x and x.endswith(".m2")):
+                    for i, skin in enumerate(profiles.get(f, [])):
+                        own = RP.skin_name(at, i)
+                        if skin in paths and paths[skin] != own:
+                            aliases.append((own, skin))
             for model, texture in sorted(pairs):
                 if model in paths and texture in paths:
                     alias = RP.alias_for(paths[model], paths[texture])

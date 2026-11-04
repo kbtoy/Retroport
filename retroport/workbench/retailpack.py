@@ -157,6 +157,8 @@ def lookups(graph: "Graph", display: int, paths: dict[int, str]) -> list[tuple[s
                 continue
             look = model_look(p) if p else ""
             out.append((f"model {f}", look))
+            if look:
+                out.append((f"skin 0 of model {f}", skin_name(look, 0)))
             if look and own:
                 tp = paths.get(own, "")
                 out.append((f"texture {own} of model {f}",
@@ -268,6 +270,31 @@ def companions(data: bytes) -> list[tuple[int, str]]:
         elif magic in (b"RPID", b"GPID"):
             out += [(f, "model") for f in _u32s(payload)]
     return [(f, k) for f, k in out if f]
+
+
+def skin_profiles(data: bytes) -> list[int]:
+    """The skin profiles a retail model (MD21) is drawn with, by FileDataID: its SFID list's first
+    numSkinProfiles ids (the LOD skins it lists after them aren't profiles)."""
+    if data[:4] != b"MD21":
+        return []
+    count, sfid = 0, []
+    for magic, payload in chunks(data):
+        if magic == b"MD21" and len(payload) >= 72 and payload[:4] == b"MD20":
+            count = struct.unpack_from("<I", payload, 68)[0]            # the body's numSkinProfiles
+        elif magic == b"SFID":
+            sfid = _u32s(payload)
+    return [f for f in sfid[:count] if f]
+
+
+def skin_name(model_path: str, profile: int) -> str:
+    """The name the client opens a model's skin profile by: its path less the extension, then NN.skin
+    (CM2Shared::LoadSkinProfile). Retail shares one skin between models of one mesh, under the other
+    model's name - the cloth of the Ethereal warlock set is drawn with its belt's - so a model whose
+    profile lives elsewhere needs a copy here as well."""
+    stem, dot = model_path, model_path.rfind(".")
+    if dot > max(model_path.rfind("\\"), model_path.rfind("/")):
+        stem = model_path[:dot]
+    return f"{stem}{profile:02d}.skin"
 
 
 def listfile_names(path: str, ids) -> dict[int, str]:
