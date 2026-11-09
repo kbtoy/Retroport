@@ -87,6 +87,9 @@ class RetailCharacter:
     layout_id: int
     model_fdid: int
     model_note: str = ""
+    # the ChrModel display's own model: the body when no choice reshapes it; else the model whose
+    # skeleton the chosen body's inherits from (its events fill the inherited sequences')
+    display_fdid: int = 0
     # CharSections-shaped: BaseSection, VariationIndex, ColorIndex, Flags, MaterialResourcesID[3]
     sections: list[dict] = field(default_factory=list)
     # CharHairGeosets-shaped: VariationID, GeosetID, GeosetType
@@ -278,7 +281,8 @@ def read_character(table, race_id: int, sex: int, cfs: str, model_geosets: set[i
             if row:
                 model_data = int(row["CreatureModelDataID"])
                 out.model_note = f"{opt.name} = {pick['Name_lang']}"
-    out.model_fdid = _model_fdid(table, 0 if model_data else int(m["DisplayID"]), model_data)
+    out.display_fdid = _model_fdid(table, int(m["DisplayID"]))
+    out.model_fdid = _model_fdid(table, 0, model_data) if model_data else out.display_fdid
 
     # --- which option is which ---
     base = next((r for r in layers.values() if r["TextureType"] == 1 and r["Layer"] == 0), None)

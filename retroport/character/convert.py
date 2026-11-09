@@ -30,7 +30,7 @@ from typing import Callable
 from pydantic import BaseModel
 
 from ..check import analyze_skin, check_model
-from ..convert import engine, fixup
+from ..convert import engine, fixup, skeleton
 from ..convert.texbake import resolve_fdids
 from ..dbc import DBCError, DBCFile, _refuse_overwrite
 from ..formats import blp
@@ -334,8 +334,12 @@ def convert_character(install_dir: str, race: str, sex: str, out_dir: str, *, ra
     write_verified(src_model, bfa.read(model_fdid))
     log(f"Converting {model_path} (wotlkconv, from the install)"
         + (f" - retail's {rc.model_note} body" if rc and rc.model_note else "") + "...")
-    er = engine.convert_with_wotlkconv(src_model, char_dir, output_stem=stem, listfile_path=listfile,
-                                       casc=bfa.casc, on_log=log)
+    # a reshaped retail body (the upright orc male) inherits most sequences from its display
+    # model's skeleton; that model's events give them their footstep, swing and hit cues
+    donor = bfa.read(rc.display_fdid) if rc and rc.display_fdid and rc.display_fdid != rc.model_fdid else None
+    with skeleton.event_donor(donor):
+        er = engine.convert_with_wotlkconv(src_model, char_dir, output_stem=stem, listfile_path=listfile,
+                                           casc=bfa.casc, on_log=log)
     for n in er.notes:
         if n.level != "info":
             log(f"  [{n.level}] {n.code}: {n.message}")

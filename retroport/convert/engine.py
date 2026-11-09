@@ -153,6 +153,8 @@ def convert_with_wotlkconv(model_path: str, out_dir: str, *, output_stem: str | 
     from wotlkconv.options import Options
     from wotlkconv.resolve import AssetSource
 
+    from . import skeleton
+    skeleton.install()                  # a skeleton plays the sequences it lacks from its parent
     if data is None:
         with open(model_path, "rb") as fh:
             data = fh.read()

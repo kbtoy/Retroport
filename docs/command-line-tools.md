@@ -279,6 +279,16 @@ the layout remap, textures and DBC writing are the BfA path's:
   and DK-only ones are skipped. They are taken in retail's UI order (`UiOrderIndex`).
 - **Body** - the ChrModel's display, or a body-shaping choice's conditional model
   (`retail.BODY_CHOICES`: the Mag'har male stands Upright, `orcmaleupright.m2`).
+- **Parent skeletons** - a `.skel` plays every sequence it doesn't define from its `SKPD`
+  parent: `orcmaleupright.skel` defines 118 and takes the other 256 from `orcmale_hd.skel`.
+  wotlkconv's merge fills only empty sections, so the upright male came out with 118 - no
+  HandsClosed (15), which the client plays on key bones 8-17 to close the hands on a weapon
+  (`CCharacterComponent::ComponentCloseFingers`, 0x004E7700), and most emotes. `convert/skeleton.py`
+  wraps that merge (retroport's copy of wotlkconv stays as its repository has it): the parent's
+  missing sequences are appended with its keyframes on the child's bones (matched by name hash;
+  identical rigs here), each with its own `.anim`, aliases and variation chains re-pointed, bones
+  that gain keys given the animated flags (`0x280`), and the sequence lookup rebuilt on the
+  client's probe chain (`id % n`, then `+ step^2`; `CM2Model::HasSequence`, 0x00825E00).
 
 The rest of `race` reads retail as it reads BfA, with retail's renames: race masks are
 `1 << ChrRaces.PlayableRaceBit` in `RaceMasks[2]` (12.1; a Mag'har's bit is 13, not 35), a race's
