@@ -414,7 +414,7 @@ function loadMount(pb, display) {
       v.clear();
       pb.textures.replaceChildren(...p.textures.map(f => textureThumb(S.source)({fdid: f, name: String(f)})));
       if (p.mesh) {
-        v.add(p.mesh, {texUrl: texUrl(S.source), visible: id => {
+        v.add(p.mesh, {texUrl: texUrl(S.source), particle: p.particle, visible: id => {
           const want = p.geosets[Math.floor(id / 100)];
           return want == null || id === want;
         }});
@@ -1032,8 +1032,9 @@ function loadDisplay(pb, display, slot, from = null) {
       for (const m of p.models) {
         // shoulders: the left one (position 0) on the wearer's left (+Y), the right one on the right
         const offset = slot === 3 && m.position >= 0 ? [0, m.position === 0 ? 0.21 : -0.21, 0] : [0, 0, 0];
-        v.add(m.mesh, {texUrl: texUrl(source), offset,
-                       visible: id => (m.type === 1 ? collectionShows : attachedShows)(slot, p.row, id)});
+        const part = v.add(m.mesh, {texUrl: texUrl(source), offset, particle: p.particle,
+                                    visible: id => (m.type === 1 ? collectionShows : attachedShows)(slot, p.row, id)});
+        addGlows(v, part, p.glows, source);
       }
       v.fit(HELD.includes(slot) ? "held" : "front", slot);
       v.canvas.hidden = !p.models.length;
@@ -1048,6 +1049,15 @@ function loadDisplay(pb, display, slot, from = null) {
   });
 }
 function notes(info, lines) { for (const l of lines || []) info.append(el("div", {class: "warnline"}, l)); }
+// A display's retail item glows (its ItemVisual: what the client hangs on the item, /api/preview's
+// glows) on an item model's attachment points - each where the model has that point, as the client's
+// ApplyItemVisual does on every model of the item.
+function addGlows(v, part, glows, source) {
+  for (const g of glows || []) {
+    if (!(part.mesh.attachments || []).some(a => a[0] === g.point)) continue;
+    v.add(g.mesh, {texUrl: texUrl(source), attach: {part, id: g.point, scale: g.scale}, ghost: true});
+  }
+}
 
 // One item's preview section (an item's panel).
 function itemPreview(display, slot) {
@@ -1161,9 +1171,12 @@ async function dress(v, pieces, token, from = null) {
   let models = 0;
   for (const slot of outfit.dress_order) for (const pc of outfit.pieces.filter(p => p.slot === slot)) for (const m of pc.models) {
     if (m.type === 1) {
-      v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, visible: id => collectionShows(slot, pc.row, id)});
+      v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, particle: pc.particle,
+                     visible: id => collectionShows(slot, pc.row, id)});
     } else if (m.attach >= 0) {
-      v.add(m.mesh, {texUrl: texUrl(source), attach: {part: bodyPart, id: m.attach}, visible: id => attachedShows(slot, pc.row, id)});
+      const part = v.add(m.mesh, {texUrl: texUrl(source), attach: {part: bodyPart, id: m.attach}, particle: pc.particle,
+                                  visible: id => attachedShows(slot, pc.row, id)});
+      addGlows(v, part, pc.glows, source);
     }
     models++;
   }

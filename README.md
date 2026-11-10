@@ -31,7 +31,11 @@ A 32-bit client on the same server takes what the x64 Workbench installs instead
   Sweatsuits), and items your client already has are marked.
 - **See it in 3D** before you install it, animated, with its glows and moving textures: an item on its
   own, a set dressed on a character of any race your client plays (male or female), weapons and
-  other one-kind sets one at a time with ◀ ▶. Every version is a click away under the preview.
+  other one-kind sets one at a time with ◀ ▶. Every version is a click away under the preview. The
+  preview draws each piece by the client's own rules: which sides of a surface show, how its glows
+  add up, its particles' colours, and the retail glow models the client hangs on an item. Only
+  versions a player can wear are listed: retail's locked "VFX unlock" looks and Blizzard's internal
+  "[DNT]" sets are left out.
 - **Mounts** - all of retail's mounts (about 1,700), ground and flying, each in 3D with its looks;
   the mounts of one model in other skins are one card, every version a click away under the preview
   like a set's; put them in the basket like items. In game each is a mount spell like the epic ones,

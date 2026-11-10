@@ -58,7 +58,7 @@ void main() {
     case 3: d = t0.rgb * t1.rgb * 2.0; a = t1.a * 2.0; break;
     case 4: d = t0.rgb * t1.rgb * 2.0; break;
     case 5: d = t0.rgb * t1.rgb; break;
-    case 6: d = t0.rgb * t1.rgb; a = t0.a * t1.a; break;
+    case 6: case 36: d = t0.rgb * t1.rgb; a = t0.a * t1.a; break;
     case 7: d = t0.rgb * t1.rgb * 2.0; a = t0.a * t1.a * 2.0; break;
     case 8: a = t0.a + t1.a; sp = t1.rgb; break;
     case 9: d = t0.rgb * t1.rgb * 2.0; a = t0.a; break;
@@ -207,7 +207,7 @@ const PS = {Opaque: 0, Mod: 1, Opaque_Mod: 2, Opaque_Mod2x: 3, Opaque_Mod2xNA: 4
             Mod_Add_Alpha: 21, Opaque_ModNA_Alpha: 22, Mod_AddAlpha_Wgt: 23, Opaque_Mod_Add_Wgt: 24,
             Opaque_Mod2xNA_Alpha_UnshAlpha: 25, Mod_Dual_Crossfade: 26, Opaque_Mod2xNA_Alpha_Alpha: 27,
             Mod_Masked_Dual_Crossfade: 28, Opaque_Alpha: 29, Guild: 30, Guild_NoBorder: 31, Guild_Opaque: 32,
-            Mod_Depth: 33, Illum: 34, Mod_Mod_Mod_Const: 35};
+            Mod_Depth: 33, Illum: 34, Mod_Mod_Mod_Const: 35, Mod_Mod_Depth: 36};
 // vertex shaders: [coordinates of textures 1-3 (0 first UVs, 1 second, 2 environment), edge fade]
 const U1 = 0, U2 = 1, ENV = 2;
 const VSH = {T1: [[U1]], Env: [[ENV]], T2: [[U2]], T1_T2: [[U1, U2]], T1_Env: [[U1, ENV]], Env_T1: [[ENV, U1]],
@@ -226,11 +226,12 @@ const SHADER_TABLE = [
   ["Opaque_Mod2xNA_Alpha_UnshAlpha", "T1_Env_T2"], ["Mod_Depth", "EdgeFade_Env"], ["Guild", "T1_T2_T1"],
   ["Guild_NoBorder", "T1_T2"], ["Guild_Opaque", "T1_T2_T1"], ["Illum", "T1_T1"], ["Mod_Mod_Mod_Const", "T1_T2_T3"],
   ["Mod_Mod_Mod_Const", "Color_T1_T2_T3"], ["Opaque", "T1"], ["Mod_Mod2x", "EdgeFade_T1_T2"],
+  ["Mod", "EdgeFade_T1"], ["Mod_Mod_Depth", "EdgeFade_T1_T2"],
 ];
 // how many textures a combiner reads
 const PS_TEXTURES = ps => [0, 1, 33, 34].includes(ps) ? 1 : ([15, 19, 25, 26, 27, 28, 30, 32, 35].includes(ps) ? 3 : 2);
 // with a texture short, a combiner falls back to its first texture alone (opaque, or cut by its alpha)
-const PS_MOD = new Set([1, 6, 7, 8, 9, 10, 11, 16, 17, 21, 23, 26, 28, 30, 31, 33, 35]);
+const PS_MOD = new Set([1, 6, 7, 8, 9, 10, 11, 16, 17, 21, 23, 26, 28, 30, 31, 33, 35, 36]);
 function shaderOf(b) {
   const s = b.shader || 0, n = 1 + (b.layers || []).length;
   if (s & 0x8000) {
@@ -247,10 +248,23 @@ function shaderOf(b) {
   return {ps, coords, edge: false};
 }
 
+// An emitter of colour slot 11-13 with the display's ParticleColor row (``colors``: start, middle and end of
+// slots 11, 12, 13 - nine ARGB numbers) takes that slot's three colours over its particles' life, as the
+// client gives them (CCharacterComponent's ReplaceParticleColor); a missing row the client draws green.
+function particleColored(d, colors) {
+  const slot = (d.color_index || 0) - 11;
+  if (slot < 0 || slot > 2 || !colors || colors.length !== 9) return d;
+  const rgb = v => [(v >>> 16 & 255) / 255, (v >>> 8 & 255) / 255, (v & 255) / 255];
+  const times = d.color && d.color.t.length === 3 ? d.color.t : [0, 0.5, 1];
+  return {...d, color: {t: times, v: [...rgb(colors[slot]), ...rgb(colors[3 + slot]), ...rgb(colors[6 + slot])]}};
+}
+
 class Viewer {
   constructor(canvas) {
     this.canvas = canvas;
-    const gl = this.gl = canvas.getContext("webgl2", {antialias: true, premultipliedAlpha: false});
+    // no alpha in the drawing buffer: what a see-through batch leaves in it would let the page show
+    // through the model (a robe's flaps flickering as it turned) - the client's window is opaque
+    const gl = this.gl = canvas.getContext("webgl2", {antialias: true, alpha: false, preserveDrawingBuffer: false});
     if (!gl) throw new Error("WebGL2 is not available in this browser");
     const program = (vs, fs) => {
       const sh = (type, src) => {
@@ -340,7 +354,8 @@ class Viewer {
   }
 
   // mesh: as the server sends it. opts: {texUrl(fdid), types: {textureType: url|canvas}, offset, visible(geoset),
-  //   bodyOf: part (a collection: driven by that part's bones), attach: {part, id}, tint: [r,g,b,a]}
+  //   bodyOf: part (a collection: driven by that part's bones), attach: {part, id, scale}, tint: [r,g,b,a],
+  //   particle: the display's ParticleColor colours (particleColored), ghost: left out of the framing (a glow)}
   add(mesh, opts = {}) {
     const gl = this.gl, vao = gl.createVertexArray(), buffers = [];
     gl.bindVertexArray(vao);
@@ -391,7 +406,8 @@ class Viewer {
     // drawn as the client draws a model's batches: by priority plane, lowest first (a hood's glowing eyes,
     // priority 4, over its dark inside, priority 0, whatever order the file lists them in)
     part.batches.sort((a, b) => (a.priority || 0) - (b.priority || 0));
-    part.emitters = (mesh.particles || []).map(d => ({def: d, list: [], acc: 0, tex: this.texture(url(d.texture))}));
+    part.emitters = (mesh.particles || []).map(d => ({def: particleColored(d, opts.particle), list: [], acc: 0,
+                                                       tex: this.texture(url(d.texture))}));
     this.parts.push(part);
     return part;
   }
@@ -456,7 +472,7 @@ class Viewer {
     let n = 0;
     const s = [0, 0, 0], ss = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
     const at = (p, i) => { const v = p.indices[i] * 3; return [p.positions[v], p.positions[v + 1], p.positions[v + 2]]; };
-    for (const p of this.parts) for (const b of p.batches) {
+    for (const p of this.parts) for (const b of p.opts.ghost ? [] : p.batches) {
       if (b.missing || !p.visible(b.geoset)) continue;
       for (let i = b.start; i + 2 < b.start + b.count; i += 3) {
         const A = at(p, i), B = at(p, i + 1), C = at(p, i + 2);
@@ -479,7 +495,7 @@ class Viewer {
   orientHeld(slot) {
     let lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
     for (const p of this.parts) {
-      const b = this.drawnBounds(p);
+      const b = p.opts.ghost ? null : this.drawnBounds(p);
       if (b) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], b[0][a]); hi[a] = Math.max(hi[a], b[1][a]); }
     }
     if (lo[0] > hi[0]) return;
@@ -515,11 +531,23 @@ class Viewer {
   }
 
   // -- animation ----------------------------------------------------------------------------
+  // att: {part, id, scale?} - the part's attachment point id; on a part that is itself placed (an item
+  // on a body, a held item stood up) in that part's frame; scaled (an item glow's size)
   attachMatrix(att) {
     const body = att.part, a = (body.mesh.attachments || []).find(x => x[0] === att.id);
     if (!a) return null;
     const bm = body.world[a[1]] || IDENT;
-    return M4.translate(bm, [a[2], a[3], a[4]]);
+    let m = M4.translate(bm, [a[2], a[3], a[4]]);
+    if (body.opts.attach || body.orient || body.offset.some(c => c)) {
+      const base = this.modelMatrix(body);
+      if (!base) return null;
+      m = M4.mul(base, m);
+    }
+    if (att.scale && att.scale !== 1) {
+      m = new Float32Array(m);
+      for (let k = 0; k < 12; k++) if (k % 4 !== 3) m[k] *= att.scale;
+    }
+    return m;
   }
 
   modelMatrix(p) {
@@ -701,7 +729,7 @@ class Viewer {
     this.particles(now, dt);
     gl.viewport(0, 0, w, h);
     gl.clearColor(0.07, 0.08, 0.1, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.enable(gl.DEPTH_TEST); gl.cullFace(gl.BACK);
     const v = this.view, view = M4.look(this.eye(), v.center, [0, 0, 1]);
     const mvp = M4.mul(M4.persp(0.7, w / h, v.dist / 200, v.dist * 30), view);
     gl.useProgram(this.prog);
@@ -715,6 +743,10 @@ class Viewer {
         const model = this.modelMatrix(p);
         if (!model) continue;
         gl.uniformMatrix4fv(this.u.uModel, false, model);
+        // a mirrored part's triangles wind the other way round: its outside still faces front
+        const det = model[0] * (model[5] * model[10] - model[6] * model[9]) - model[4] * (model[1] * model[10] - model[2] * model[9]) +
+                    model[8] * (model[1] * model[6] - model[2] * model[5]);
+        gl.frontFace(det < 0 ? gl.CW : gl.CCW);
         gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, p.boneTex);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, p.nb * 4, 1, gl.RGBA, gl.FLOAT, p.mats);
         gl.uniform1i(this.u.uSkinned, 1);
@@ -729,6 +761,13 @@ class Viewer {
           if (blended !== (pass === 1)) continue;
           const mode = tint[3] < 1 && b.blend < 2 ? 2 : b.blend;
           this.blend(mode);
+          // as the client sets them per material (CM2SceneRender::SetupMaterial): the back culled unless
+          // the material is two-sided (0x4), depth tested unless 0x8, written unless 0x10 - whatever the
+          // blend: a glow shell drawn from both sides adds twice, and a robe's inside shows through
+          const mf = b.mflags ?? (b.two_sided ? 4 : 0);
+          if (mf & 0x4) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+          if (mf & 0x8) gl.disable(gl.DEPTH_TEST); else gl.enable(gl.DEPTH_TEST);
+          gl.depthMask(!(mf & 0x10));
           gl.uniform1i(this.u.uPremul, mode === 7 ? 1 : 0);
           gl.uniform4fv(this.u.uTint, tint);
           const t = b.tex && b.tex.ready ? b.tex : null;
@@ -764,16 +803,18 @@ class Viewer {
       }
     }
     gl.bindVertexArray(null);
+    gl.disable(gl.CULL_FACE); gl.enable(gl.DEPTH_TEST); gl.frontFace(gl.CCW);   // particles face the camera
     this.drawParticles(mvp, view);
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
 
   // M2 blend modes: 0 opaque, 1 alpha key, 2 alpha, 3 add (no alpha), 4 add, 5 modulate, 6 modulate x2,
-  // 7 blend-add (premultiplied: the colour is added over what the alpha leaves)
+  // 7 blend-add (premultiplied: the colour is added over what the alpha leaves). Depth writes follow the
+  // material's flags, not the blend (see _draw).
   blend(mode) {
     const gl = this.gl;
-    if (mode <= 1) { gl.disable(gl.BLEND); gl.depthMask(true); return; }
-    gl.enable(gl.BLEND); gl.depthMask(false);
+    if (mode <= 1) { gl.disable(gl.BLEND); return; }
+    gl.enable(gl.BLEND);
     if (mode === 2) gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     else if (mode === 3) gl.blendFunc(gl.ONE, gl.ONE);
     else if (mode === 4) gl.blendFunc(gl.SRC_ALPHA, gl.ONE);

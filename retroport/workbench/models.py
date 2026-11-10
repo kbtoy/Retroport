@@ -12,9 +12,9 @@ Night Elf's). Armour drawn on the body is ItemDisplayInfoMaterialRes: a texture 
 
 The resolution tables are read once per build and kept on disk (``displays-<source>-<build>``).
 A mesh is the model in its bind pose - positions, normals, UVs, triangles, per batch its geoset,
-first texture and blend mode - with its bones, vertex weights, attachment points and the Stand
-animation's keyframes (from the model, its ``.skel`` or an ``.anim``), for the viewer to play.
-Particles and ribbons are left out.
+textures, blend mode and material flags - with its bones, vertex weights, attachment points and the
+Stand animation's keyframes (from the model, its ``.skel`` or an ``.anim``), for the viewer to play.
+Ribbons are left out.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ import struct
 import threading
 from collections import defaultdict
 
-INDEX_VERSION = 3
+INDEX_VERSION = 5
 TABLES = ("ItemDisplayInfo", "ModelFileData", "ComponentModelFileData", "TextureFileData",
           "ComponentTextureFileData", "ItemDisplayInfoMaterialRes", "ItemDisplayInfoModelMatRes",
-          "HelmetGeosetData", "ChrRaces")
+          "HelmetGeosetData", "ChrRaces", "ParticleColor")
 SECTIONS = {0: "Upper arm", 1: "Lower arm", 2: "Hand", 3: "Upper torso", 4: "Lower torso", 5: "Upper leg",
             6: "Lower leg", 7: "Foot", 8: "Accessory", 9: "Scalp upper", 10: "Scalp lower", 11: "Cloak", 12: "Cloak back",
             13: "Unknown 13", 14: "Unknown 14"}
@@ -62,6 +62,9 @@ class DisplayIndex:
         # race -> [male model race, sex, female model race, sex, male texture race, sex, female texture race, sex]
         self.fallbacks = {int(k): v for k, v in d.get("fallbacks", {}).items()}
         self.prefixes = dict(d.get("prefixes", {}))                             # ChrRaces prefix -> lowest race id
+        # display -> its ParticleColor row's nine colours (start, middle, end of colour slots 11-13, ARGB)
+        self.particle = {int(k): v for k, v in d.get("particle", {}).items()}
+        self.visual = {int(k): v for k, v in d.get("visual", {}).items()}       # display -> its ItemVisual (a glow)
 
     @classmethod
     def build(cls, src, log=lambda m: None) -> "DisplayIndex":
@@ -75,8 +78,14 @@ class DisplayIndex:
                 t[name] = []
         d = {"displays": {}, "model_files": defaultdict(list), "comp_models": {}, "tex_files": defaultdict(list),
              "comp_tex": {}, "sections": defaultdict(list), "model_mat": defaultdict(list),
-             "helmet_hides": defaultdict(lambda: defaultdict(list)), "fallbacks": {}}
+             "helmet_hides": defaultdict(lambda: defaultdict(list)), "fallbacks": {}, "particle": {}, "visual": {}}
+        from .mounts import particle_colors_of
+        colors = {i: particle_colors_of(r) for i, r in t["ParticleColor"]}
         for i, r in t["ItemDisplayInfo"]:
+            if colors.get(r.get("ParticleColorID") or 0):
+                d["particle"][i] = colors[r["ParticleColorID"]]
+            if r.get("ItemVisual"):
+                d["visual"][i] = r["ItemVisual"]
             mr, mm = r["ModelResourcesID"], r["ModelMaterialResourcesID"]
             mt = list(r.get("ModelType") or [-1 if not mr[0] else ATTACHED, -1 if not mr[1] else ATTACHED])
             d["displays"][i] = [mr[0], mr[1], mm[0], mm[1], mt[0], mt[1], *list(r["GeosetGroup"])[:6],
@@ -110,7 +119,7 @@ class DisplayIndex:
         return {"displays": self.displays, "model_files": self.model_files, "comp_models": self.comp_models,
                 "tex_files": self.tex_files, "comp_tex": self.comp_tex, "sections": self.sections,
                 "model_mat": self.model_mat, "helmet_hides": self.helmet_hides, "fallbacks": self.fallbacks,
-                "prefixes": self.prefixes}
+                "prefixes": self.prefixes, "particle": self.particle, "visual": self.visual}
 
     # -- resolution ---------------------------------------------------------------
     def _fallback(self, race: int, sex: int, textures: bool) -> tuple[int, int] | None:
@@ -359,6 +368,8 @@ def model_anims(m, seq, ext, textures: dict[int, int]) -> dict:
         particles.append({
             "bone": pe["bone"], "pos": [round(c, 5) for c in pe["position"]], "flags": pe["flags"],
             "type": pe["emitter_type"], "blend": pe["blending_type"], "texture": tfd,
+            # 11-13: its colours come from the display's ParticleColor row, as the client gives them
+            "color_index": pe.get("particle_color_index", 0),
             "rows": max(1, pe.get("texture_dimensions_rows") or 1), "cols": max(1, pe.get("texture_dimensions_columns") or 1),
             "speed": tr(pe.get("emission_speed")), "speed_var": tr(pe.get("speed_variation")),
             "vrange": tr(pe.get("vertical_range")), "hrange": tr(pe.get("horizontal_range")),
@@ -460,6 +471,9 @@ def mesh(read, fdid: int, textures: dict[int, int], animate: bool = True) -> dic
         batches.append({"start": istart + (level << 16), "count": icount, "texture": tfd, "texture_type": tex["type"],
                         "wrap": [bool(tex["flags"] & 1), bool(tex["flags"] & 2)], "blend": material["blending_mode"],
                         "two_sided": bool(material["flags"] & 4), "unlit": bool(material["flags"] & 1),
+                        # the material's flags as the client draws by them (CM2SceneRender::SetupMaterial):
+                        # 0x4 both sides (else the back is culled), 0x8 no depth test, 0x10 no depth write
+                        "mflags": material["flags"],
                         "priority": priority, "geoset": sid, "color": color, "shader": shader,
                         "weight": _lookup(m.texture_weight_combos, wcombo), "uvanim": _lookup(m.texture_transform_combos, tcombo),
                         "layers": _layers(m, textures, combo, tcombo, wcombo, count)})

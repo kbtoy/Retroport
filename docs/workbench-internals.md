@@ -107,7 +107,21 @@ install fetches what it doesn't store from Blizzard's CDN, verified and kept in 
   Chopper's leaves keep still while its glow, on the second UVs, scrolls). A held piece shown by itself has no race and sex to pick. A see-through batch
   isn't drawn until its texture is loaded (without it, it would be a solid grey card). A model's batches
   are drawn as the client draws them, by priority plane, lowest first (a hood's glowing eyes,
-  priority 4, over its dark inside, priority 0). Armor drawn on the body shows its section textures. Icons and
+  priority 4, over its dark inside, priority 0). Each material is drawn as the client's
+  `CM2SceneRender::SetupMaterial` sets it: the back of a triangle culled unless the material is
+  two-sided (flag 0x4), depth tested unless 0x8, written unless 0x10 - whatever the blend (the
+  mesh carries `mflags`). Drawn from both sides, a glow shell added twice (the Galactic
+  Gladiator's Silk Cord's buckle a flat magenta disc) and a robe's inside showed through it. The
+  canvas has no alpha: what a see-through batch left in it let the page show through the model
+  (Valeguard Vestments' flaps flickering as the model turned). An emitter of colour slot 11-13
+  takes the display's ParticleColor row (`DisplayIndex.particle`, a mount's from its catalog
+  display), as the client's `ReplaceParticleColor` gives it. A display's retail glows hang on its
+  models' attachment points (`Workbench.display_glows`: `glows.placements` over ItemVisuals and
+  ItemVisualsXEffect - what the client draws; the weapon type from the display's first catalog
+  item), each its own animated model, scaled, left out of the framing. A version a player can't
+  wear isn't listed: an appearance behind a player condition, with no name and in no set players
+  see (the 12.0 "VFX unlock" looks, modifiers 154-158; `catalog.build_catalog`'s `wearable`), and
+  an item's sets leave out Blizzard's internal "[DNT]" ones. Armor drawn on the body shows its section textures. Icons and
   textures a source can't open (BfA 8.3.7 keeps its last sets' art encrypted) come from the other
   source.
 - **A set of one kind** - weapons, masks, cloaks, shoulders - shows its pieces one at a time in that
@@ -295,7 +309,9 @@ and its CreatureSoundData row (CreatureDisplayInfo.SoundID, else its model's). `
 (`mounts.sound_bundle`) keeps what those rows need: each row's kits by 3.3.5 column
 (`race.sounds.CSD_KIT_COLUMNS`) and its SoundFootstepID, each footstep's FootstepTerrainLookup rows
 (terrain, kit, splash kit), each kit's SoundKit values and SoundKitEntry files (FileDataID,
-frequency). The page's preview draws the model with textures 11/12/13 and the geosets the packed data shows.
+frequency). The page's preview draws the model with textures 11/12/13 and a fourth on type 5 (as
+the client's skin table puts it), the geosets the packed data shows, and its emitters of colour slot
+11-13 in the display's particle colours.
 
 **Families** (`mounts.model_families`, worked out when the catalog loads - nothing cached): the
 mounts whose first display has one model, rooted at the oldest (lowest Mount id); a mount with no

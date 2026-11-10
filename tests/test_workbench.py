@@ -73,6 +73,28 @@ def test_the_catalog_keeps_named_items_with_a_look_and_their_appearances():
     assert cat.item_detail(STAFF)["in_client"] and cat.item_detail(STAFF)["item_sets"] == [{"id": 5, "name": "Classic Mocks"}]
 
 
+def test_an_items_locked_versions_and_blizzards_internal_sets_are_left_out():
+    src = FakeSource()
+    t = src.tables
+    # the robe's 12.0 "VFX unlock" looks: locked behind a player condition, one only in a [DNT] set, one in
+    # none; and an open look of its own no set names
+    t["ItemModifiedAppearance"] += [(6, {"ItemID": CLOTH_ROBE, "ItemAppearanceModifierID": 157, "ItemAppearanceID": 54}),
+                                    (7, {"ItemID": CLOTH_ROBE, "ItemAppearanceModifierID": 158, "ItemAppearanceID": 55}),
+                                    (8, {"ItemID": CLOTH_ROBE, "ItemAppearanceModifierID": 8, "ItemAppearanceID": 56})]
+    t["ItemAppearance"] += [(54, {"DefaultIconFileDataID": 1054, "ItemDisplayInfoID": 2054, "TransmogPlayerConditionID": 150132}),
+                            (55, {"DefaultIconFileDataID": 1055, "ItemDisplayInfoID": 2055, "TransmogPlayerConditionID": 150131}),
+                            (56, {"DefaultIconFileDataID": 1056, "ItemDisplayInfoID": 2056})]
+    t["TransmogSet"] += [(13, {"Name_lang": "[DNT] 12.0 Mythic VFX Unlock - All Items", "ClassMask": 0, "TransmogSetGroupID": 0,
+                               "ItemNameDescriptionID": 0, "ParentTransmogSetID": 0, "ExpansionID": 11,
+                               "PatchIntroduced": 120000, "UiOrder": 4})]
+    t["TransmogSetItem"] += [(4, {"TransmogSetID": 13, "ItemModifiedAppearanceID": 6})]
+    cat = C.build_catalog(src)
+    robe = cat.item_detail(CLOTH_ROBE)
+    assert [(a["modifier"], a["appearance"], a["label"]) for a in robe["appearances"]] == \
+        [(0, 52, "Normal"), (8, 56, "Version 2")]
+    assert [s["id"] for s in robe["sets"]] == [12]                       # not the [DNT] set
+
+
 def test_item_search_filters_and_hides_test_items():
     cat = _catalog()
     ids = lambda **kw: sorted(r[0] for r in cat.search_items(**kw)[1])
