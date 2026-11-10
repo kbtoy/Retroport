@@ -1,6 +1,6 @@
 """The workbench as an application: no console, its page in a window of its own.
 
-``Retroport Workbench x64.exe`` (``edition.NAME``) starts this with ``pythonw`` (``pythonw -m retroport.workbench.app`` does
+``Retroport Workbench 32-bit.exe`` (``edition.NAME``) starts this with ``pythonw`` (``pythonw -m retroport.workbench.app`` does
 the same):
 
 * what the server says goes to ``<data>/workbench.log`` - there is no console to show it;

@@ -1,4 +1,4 @@
-"""The x64 client as the place Install goes into, and the preview's display rows."""
+"""The client as the place Install goes into, and the preview's display rows."""
 
 import types
 
@@ -7,14 +7,14 @@ from retroport.workbench import jobs as J
 from retroport.workbench import models as M
 
 
-def test_the_client_is_the_folder_with_the_x64_clients_program(tmp_path):
+def test_the_client_is_the_folder_with_the_clients_program(tmp_path):
     client = tmp_path / "client"
     (client / "Data").mkdir(parents=True)
     assert not J.is_client(str(client))
     (client / "Wow.exe").write_bytes(b"MZ")
-    assert not J.is_client(str(client))                                     # a 32-bit client isn't it
+    assert not J.is_client(str(client))                                     # Blizzard's own client isn't it
     (client / edition.CLIENT_EXE).write_bytes(b"MZ")
-    assert J.is_client(str(client)) and edition.CLIENT_EXE == "WowClient64.exe"
+    assert J.is_client(str(client)) and edition.CLIENT_EXE == "WowClient32.exe"
     assert not J.is_client("")
 
 

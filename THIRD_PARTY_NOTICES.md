@@ -61,7 +61,7 @@ SOFTWARE.
 
 ## Earlier Workbenches
 
-Retroport Workbench x64 runs no other tool. Earlier Workbenches (the `main` branch) downloaded and
+Retroport Workbench 32-bit runs no other tool. Earlier Workbenches (the `main` branch) downloaded and
 ran **[wow-retail-backport](https://github.com/Kirazul/wow-retail-backport)** by **Kirazul** (no
 license: all rights stay with its author) and the tools of
 **[Equip Plus (wxl-equip-plus)](https://github.com/TheDaveCalaz/wxl-equip-plus)** by **TheDaveCalaz**

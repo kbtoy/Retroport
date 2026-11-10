@@ -2,7 +2,7 @@
 
 Listens on 127.0.0.1 only. Catalogs load in the background, so the page is up at once and shows
 their progress. Settings (the installs, the 3.3.5 client, WoWDBDefs, the listfile, where the
-workbench keeps its cache and basket) live in ``%USERPROFILE%\\.retroport\\workbench.json``; the
+workbench keeps its cache and basket) live in ``%USERPROFILE%\\.retroport\\<edition.SETTINGS_FILE>``; the
 ``retroport workbench`` options update them.
 
 API (GET unless noted):

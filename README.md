@@ -1,15 +1,21 @@
-# Retroport Workbench x64
+# Retroport Workbench 32-bit
 
 Browse every retail World of Warcraft item, transmog set and mount in 3D, pick the ones you want, and
-install them into the **x64 3.3.5 client (Ultra WoW x64)** - with the SQL for your **AzerothCore**
-server, a backup of everything it changes and an Undo.
+install them into the **32-bit 3.3.5 client (Ultra WoW 32-bit)** - with the SQL for your
+**AzerothCore** server, a backup of everything it changes and an Undo.
 
-The x64 client draws retail's items itself, from retail's own tables and files, so nothing is
-converted: Install puts retail's own models, textures and tables into the client as they are. No other
-tool is downloaded or run - no conversion kit, no WarcraftXL or Equip Plus.
+Ultra WoW 32-bit is the x64 client's source built as a 32-bit program, so it draws retail's items
+itself, from retail's own tables and files, and nothing is converted: Install puts retail's own
+models, textures and tables into the client as they are. No other tool is downloaded or run - no
+conversion kit, no WarcraftXL or Equip Plus.
 
-This is the `x64` branch. The `main` branch keeps the earlier Workbench, which converted items for
-any 3.3.5a client through the retail backport kit.
+This is the `32bit` branch, made from the `x64` branch (the Workbench for Ultra WoW x64); the two
+differ in `retroport/workbench/edition.py` and their docs. The `main` branch keeps the earlier
+Workbench, which converted items for any 3.3.5a client through the retail backport kit.
+
+**Not usable yet:** the 32-bit client isn't built. Until it is, nothing here has been tried against
+it - what it can hold in a 32-bit program's memory may mean this branch has to install less than the
+x64 one does.
 
 ## What it does
 
@@ -46,21 +52,21 @@ any 3.3.5a client through the retail backport kit.
 
 ## Download and run
 
-1. Download `Retroport-Workbench-x64-<version>-win64.zip` from the [Releases](../../releases) page.
+1. Download `Retroport-Workbench-32-bit-<version>-win64.zip` from the [Releases](../../releases) page.
 2. Unpack the **whole** folder anywhere. Keep `runtime\` and `app\` next to the exe.
-3. Run **Retroport Workbench x64.exe**. It opens in a window of its own; closing the window closes it.
+3. Run **Retroport Workbench 32-bit.exe**. It opens in a window of its own; closing the window closes it.
    Windows may warn that the program is from an unknown publisher (it isn't code-signed): choose
    *More info*, then *Run anyway*.
-4. The first time, **Settings** opens. Choose the x64 client's folder (the one with
-   `WowClient64.exe`), and set *Retail items* to your own retail install.
+4. The first time, **Settings** opens. Choose the 32-bit client's folder (the one with
+   `WowClient32.exe`), and set *Retail items* to your own retail install.
 5. Find items, sets and mounts, add them with **+**, look them over in **Basket**, give them stats in
    **Stats**, then **Install**. When it's done: apply the SQL it shows to your world database, restart
-   the worldserver, and log in with the x64 client.
+   the worldserver, and log in with the 32-bit client.
 
 ## What you need
 
 - **Windows 10 or 11.** The app's window is Microsoft Edge's app mode (Edge comes with Windows).
-- **The x64 3.3.5 client** (`WowClient64.exe`).
+- **The 32-bit 3.3.5 client** (`WowClient32.exe`): Ultra WoW built as a 32-bit program.
 - **Your own retail install** (the live game), with the [WoWDBDefs](https://github.com/wowdev/WoWDBDefs)
   definitions folder and the [community listfile](https://github.com/wowdev/wow-listfile): Install
   reads retail's tables and files from there. Browsing works from [wago.tools](https://wago.tools)
@@ -69,7 +75,7 @@ any 3.3.5a client through the retail backport kit.
 
 ## Settings
 
-- **x64 client folder** - *Browse...* opens Windows' folder picker, and the field says what it found
+- **32-bit client folder** - *Browse...* opens Windows' folder picker, and the field says what it found
   there and where Install will put its patch.
 - **Where the items come from** - *wago.tools* or *your own retail install* (what Install needs; it is
   also faster, and works while wago.tools is down). The bodies the character view dresses come from
@@ -79,12 +85,11 @@ Everything the app keeps is in your user folder:
 
 | | |
 |---|---|
-| `%USERPROFILE%\.retroport\workbench.json` | your settings |
-| `%USERPROFILE%\.retroport\workbench\` | the cache, your basket, the installs and their backups (`direct\`), the log (`workbench.log`) |
+| `%USERPROFILE%\.retroport\workbench-32bit.json` | your settings |
+| `%USERPROFILE%\.retroport\workbench-32bit\` | the cache, your basket, the installs and their backups (`direct\`), the log (`workbench.log`) |
 
-These are the same files the earlier Workbench used: your basket, what's in your game and its
-History carry over. Settings this app doesn't use (the earlier Workbench's kit) stay in the file as
-they were.
+They're its own, apart from the x64 Workbench's (`workbench.json`, `workbench\`), so the two run side by
+side and never change each other's basket or installs.
 
 ## How Install works
 
@@ -92,8 +97,8 @@ they were.
    client reads.
 2. It works out every file the basket's looks name - the models for every race and sex, their
    skins and textures, the body textures, the icons - and puts them, the item tables and the
-   client's file-id tables (with the new files added) into `Data\patch-Q.MPQ` (`patch-T.MPQ` in an
-   x64 client built before 2026-11-03, which reads only the topmost file-id tables). Where the client
+   client's file-id tables (with the new files added) into `Data\patch-Q.MPQ` (`patch-T.MPQ` in a
+   client built before 2026-11-03, which reads only the topmost file-id tables). Where the client
    looks for a file somewhere else than retail keeps it (a helm's texture kept with its set's other
    pieces), the patch has it there too; a check then looks up every file the client will open, as
    the client does. The basket's mounts go in the same patch (see [Mounts](#mounts)).
@@ -106,7 +111,7 @@ they were.
    server's dbc folder is left alone. It never replaces another tool's patch, moves an earlier
    install of its own at `patch-T.MPQ` to `patch-Q.MPQ`, and then names any file of the patch that an
    archive above it hides (a whole table another tool put higher up).
-5. **Check in the client** (after an install) opens the x64 client in its check mode - no login, a
+5. **Check in the client** (after an install) opens the 32-bit client in its check mode - no login, a
    window that closes by itself, about a second a model - which reads every model the patch holds
    the way play reads them and compares each with its converted form. The page then says how many
    read as retail has them, how many draw differently and which the client refuses; the log names
@@ -117,8 +122,8 @@ the History (a failed one too, with the step it stopped at). **Undo last install
 that install replaced and removes what it added. **Build only** (under *Install's steps*) stops before
 the install, so you can look at the patch and the SQL first.
 
-These items show retail's looks only in the x64 client: a stock 32-bit client shows them without a
-model. The x64 client reads the file-id tables of every archive, so other packs' new files - the
+These items show retail's looks only in Ultra WoW: Blizzard's own client shows them without a
+model. The client reads the file-id tables of every archive, so other packs' new files - the
 races', the undead's - and this patch's all resolve.
 
 ## Mounts
@@ -163,9 +168,8 @@ icons went with it: Install again.
 
 - **The window doesn't appear.** Look at `%USERPROFILE%\.retroport\workbench\workbench.log`. Without
   Edge, the app opens in your default browser instead.
-- **"Port 8335 is taken"** - another program uses the port the app listens on (only on your own
-  machine, `127.0.0.1`). Close it and start the app again. The earlier Workbench uses the same port:
-  starting this one while it runs asks to replace it.
+- **"Port 8337 is taken"** - another program uses the port the app listens on (only on your own
+  machine, `127.0.0.1`). Close it and start the app again. (The x64 Workbench uses 8335: both run at once.)
 - **The first look at things is slow** - models and textures are being read or downloaded; they're
   kept for next time.
 - **wago.tools is down** - Settings > *Where the items come from* > *My own install*.
@@ -174,7 +178,7 @@ icons went with it: Install again.
 - **Which copy of the app is running?** - the version is next to the name at the top (hover it for
   the folder it runs from). Starting another copy while one runs asks to replace it.
 - **"this client and retail build don't go together"** - your retail install updated and changed an
-  item table's layout; the x64 client reads the one it was built for.
+  item table's layout; the client reads the one it was built for.
 - **"display ... is a row of your client's ItemDisplayInfo.dbc"** - 3.3.5 or an older tool already
   uses that number, and the client draws its row instead of retail's look.
 - **Items are level 1 with no stats** - give them stats in **Stats** and Install again (the Install
@@ -195,7 +199,7 @@ Python 3.11 or newer (3.14 is what it's tested with):
 ```
 git clone https://github.com/kbtoy/Retroport
 cd Retroport
-git checkout x64
+git checkout 32bit
 python -m pip install -e ".[dev]"
 python -m pytest -q tests
 

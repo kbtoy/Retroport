@@ -1,8 +1,8 @@
 """Build the Workbench's release (this edition's: ``edition.NAME``): a folder anyone can unpack and
 run, and a zip of it.
 
-    Retroport Workbench x64/
-      Retroport Workbench x64.exe   the launcher (packaging/launcher.cs, built with Windows' own C# compiler)
+    Retroport Workbench 32-bit/
+      Retroport Workbench 32-bit.exe   the launcher (packaging/launcher.cs, built with Windows' own C# compiler)
       runtime/                  Python's official embeddable package, with retroport's dependencies
       app/                      the workbench's code: retroport and its copy of wotlkconv, as source
       README.txt, THIRD_PARTY_NOTICES.md, licenses/

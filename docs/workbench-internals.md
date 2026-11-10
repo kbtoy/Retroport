@@ -1,15 +1,17 @@
-# Retroport Workbench x64 - internals
+# Retroport Workbench 32-bit - internals
 
 A developer's reference: how the Workbench reads its data, builds its catalog, draws its previews
-and installs into the x64 client. For using it, see the [README](../README.md).
+and installs into the 32-bit client. For using it, see the [README](../README.md).
 
 ## How it's built
 
-An application for the x64 3.3.5 client: `Retroport Workbench x64.exe` opens it in a window of its
+An application for the 32-bit 3.3.5 client - Ultra WoW built as a 32-bit program from the x64
+client's source (below, "the x64 client" names that source and its tools, which both builds share):
+`Retroport Workbench 32-bit.exe` opens it in a window of its
 own (Edge's app mode - no console, no browser tab; the server behind it listens on
-`http://127.0.0.1:8335/` only, `edition.PORT`). Closing the window closes it - after an Install
+`http://127.0.0.1:8337/` only, `edition.PORT`). Closing the window closes it - after an Install
 that's running has finished; started again while it runs, it opens another window on it. Its log is
-`%USERPROFILE%\.retroport\workbench\workbench.log`. It runs no other tool: no conversion kit, no
+`%USERPROFILE%\.retroport\workbench-32bit\workbench.log`. It runs no other tool: no conversion kit, no
 WarcraftXL or Equip Plus (the `main` branch's Workbench did).
 
 - **Game data from wago.tools for browsing** - retail's tables (as wago's CSV) and its files by
@@ -20,21 +22,22 @@ WarcraftXL or Equip Plus (the `main` branch's Workbench did).
 - **Your own installs** (Settings): a retail and a BfA install read directly - faster, and
   independent of wago; they need WoWDBDefs' definitions and the community listfile. Install reads
   retail from your own install only.
-- **Settings** (the first run opens it): the x64 client folder and where the items come from. Each
+- **Settings** (the first run opens it): the 32-bit client folder and where the items come from. Each
   Browse button opens Windows' own folder picker, and each field says what it found there. A
   setting this Workbench doesn't use (the earlier Workbench's `kit` and `route`) is kept in
-  `workbench.json` as it was when it saves (`Settings._others`).
+  `workbench-32bit.json` as it was when it saves (`Settings._others`). Its settings and data folder
+  (`edition.SETTINGS_FILE`, `DATA_FOLDER`) are its own, apart from the x64 Workbench's.
 
 From a checkout: `python packaging/build_release.py --launcher-only` builds the launcher next to the
 code (it runs the `pythonw` on PATH), or run `retroport workbench` / `Workbench.bat` in a console -
 with `--bfa` / `--retail <install> --dbd ... --listfile ...` to read local installs:
 
 ```
-retroport workbench --bfa "<BfA install>" --retail "<retail install>" --client "<x64 client>" ^
+retroport workbench --bfa "<BfA install>" --retail "<retail install>" --client "<32-bit client>" ^
     --dbd "<WoWDBDefs\definitions>" --listfile "<listfile.csv>"
 ```
 
-Options are remembered in `%USERPROFILE%\.retroport\workbench.json`. **A release** -
+Options are remembered in `%USERPROFILE%\.retroport\workbench-32bit.json`. **A release** -
 `python packaging/build_release.py` - is a folder and its zip named after the edition
 (`edition.NAME`): the launcher (built with the C# compiler every Windows has), Python's official
 embeddable package with retroport's dependencies, and the code (retroport, wotlkconv); it imports and
@@ -170,9 +173,9 @@ refuses a whole UPDATE with one value out of range. Item sets are laid out on th
 installed: they need rows in the client's and the server's `ItemSet.dbc`, which Install doesn't make
 yet (`itemstats.set_rows` / `itemset_dbc` can).
 
-## The x64 client
+## The 32-bit client
 
-A client folder with `WowClient64.exe` (`edition.CLIENT_EXE`: the x64 3.3.5 client built from
+A client folder with `WowClient32.exe` (`edition.CLIENT_EXE`: the 32-bit 3.3.5 client built from
 wowdecomp-dx11) is what Install goes into: Settings names it, *close World of Warcraft* waits for it
 (or a `Wow.exe`), and Undo puts files back into the client the install went into (its record's
 `data`). Its `Data` may be hard links to another client's archives: Install removes an archive before
@@ -354,7 +357,7 @@ Undo leaves an archive that changed since as it is (`Direct.install`, `Direct.un
 ## Client check (0.5.0)
 
 `Direct.client_check` writes the installed patch's `.m2` list to `<work>\client-check\models.txt` and runs
-`WowClient64.exe -windowed` (`edition.CLIENT_EXE`) with `WXL_RETAIL_MODEL_CHECK=<that folder>`, `WXL_NATIVE_RETAIL_MODELS=1` and
+`WowClient32.exe -windowed` (`edition.CLIENT_EXE`) with `WXL_RETAIL_MODEL_CHECK=<that folder>`, `WXL_NATIVE_RETAIL_MODELS=1` and
 `WXL_LOG_FLUSH=1` (the client's model check mode, retroport-native `x64_native_model_check.py`): at the login
 screen it reads each model natively and through the converter, writes `check.txt` (`<model>\t<same|DIFFERS|
 other: not read>`) and exits. The client's `Logs\*.log` are copied aside first and put back; new

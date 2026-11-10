@@ -992,21 +992,21 @@ def workbench_cmd(
     bfa: str = typer.Option("", "--bfa", help="A local BfA (8.x) install to browse."),
     retail: str = typer.Option("", "--retail", help="A local retail install to browse (a partial one fetches "
                                "what it does not store from Blizzard's CDN, kept in the workbench cache)."),
-    client: str = typer.Option("", "--client", help="Your x64 client (the folder with WowClient64.exe): Install "
+    client: str = typer.Option("", "--client", help="Your 32-bit client (the folder with WowClient32.exe): Install "
                                "puts items there."),
     dbd: str = typer.Option("", "--dbd", help="WoWDBDefs 'definitions' folder."),
     listfile: str = typer.Option("", "--listfile", help="Community listfile.csv."),
     data: str = typer.Option("", "--data", help="Where the workbench keeps its cache and basket "
                              "(default %USERPROFILE%\\.retroport\\workbench)."),
-    port: int = typer.Option(0, "--port", help="The page's port (default: the edition's, 8335)."),
+    port: int = typer.Option(0, "--port", help="The page's port (default: the edition's, 8337)."),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open the page in your browser."),
 ) -> None:
-    """Retroport Workbench x64: browse retail's items, sets and mounts and install them into the x64 client.
+    """Retroport Workbench 32-bit: browse retail's items, sets and mounts and install them into the 32-bit client.
 
     Without --retail / --bfa, retail's items and BfA's bodies (for the character view) come from
     wago.tools; Install reads retail from your own install (--retail).
 
-    Options given are remembered (%USERPROFILE%\\.retroport\\workbench.json): later runs need none."""
+    Options given are remembered (%USERPROFILE%\\.retroport\\workbench-32bit.json): later runs need none."""
     from .workbench.server import PORT, Settings, serve
 
     s = Settings.load()

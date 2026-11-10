@@ -73,7 +73,7 @@ def test_fresh_settings_read_retail_and_bfas_bodies_from_wago():
     specs = {s.key: s for s in st.effective_sources()}
     assert specs["retail"].kind == "wago" and specs["retail"].browse
     assert specs["bfa"].kind == "wago" and specs["bfa"].build == "8.3.7.35435" and not specs["bfa"].browse
-    assert st.problems() == ["choose the x64 client's folder in Settings"]     # wago needs no DBDefs or listfile
+    assert st.problems() == ["choose the 32-bit client's folder in Settings"]     # wago needs no DBDefs or listfile
     st.set_source("retail", "Retail", "X:\\nowhere", product="wow")
     assert any("not a game install" in p for p in st.problems())
 

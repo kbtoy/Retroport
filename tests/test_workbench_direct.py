@@ -279,7 +279,7 @@ def test_retail_direct_needs_the_x64_client_and_a_local_retail(tmp_path, monkeyp
     os.remove(os.path.join(d.client, edition.CLIENT_EXE))
     d.source = types.SimpleNamespace(spec=types.SimpleNamespace(kind="wago"))
     why = d.problems()
-    assert any("x64 client" in w for w in why) and any("own install" in w for w in why)
+    assert any(edition.CLIENT_NAME in w for w in why) and any("own install" in w for w in why)
     with pytest.raises(RuntimeError):
         d.start("go", d.go, BASKET, PLAN)
 
