@@ -205,6 +205,11 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                              f"or sound tables above {patch} - the mounts' rows would be hidden. Rename or remove "
                              f"{'it' if len(above) == 1 else 'them'}, or move them below {patch}")
         base = {t: cd.read(f"DBFilesClient\\{t}.dbc") for t in (*MT.TABLES, MT.ITEM_TABLE)}
+        # the particle colours: in the patch unless an archive above it holds the table (then left out)
+        colors_above = next((label for label, s in cd.above if _has(s, f"DBFilesClient\\{MT.PARTICLE_TABLE}.dbc")), "")
+        colors = cd.find(f"DBFilesClient\\{MT.PARTICLE_TABLE}.dbc") if not colors_above else None
+        if colors:
+            base[MT.PARTICLE_TABLE] = colors[1]
         item_dbc = DBCFile.from_bytes(cd.read("DBFilesClient\\Item.dbc"))
         terrains = DBCFile.from_bytes(cd.read("DBFilesClient\\TerrainTypeSounds.dbc"))
         top = next(((label, s) for label, s in cd.above if _has(s, f"DBFilesClient\\{MT.ITEM_TABLE}.dbc")), None)
@@ -276,7 +281,12 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                              gradient=dd.get("gradient"),
                              dissolve=(dict(dd["dissolve"], layers=[dict(layer) for layer in dd["dissolve"]["layers"]])
                                        if dd.get("dissolve") else None),
-                             bank=dd.get("bank")))
+                             bank=dd.get("bank"),
+                             particle=list(dd["particle"]) if dd.get("particle") and colors else None))
+        if dd.get("particle") and not colors:
+            notes.append(f"{name}: its particles' colours are left out - " +
+                         (f"{colors_above} holds the client's particle colour table above {patch}" if colors_above
+                          else "the client has no particle colour table"))
         if dd.get("dissolve"):
             notes.append(f"{name}: retail lays a dissolve over it")
         if dd.get("gradient"):

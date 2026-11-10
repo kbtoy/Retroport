@@ -38,12 +38,12 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-CATALOG_VERSION = 6
+CATALOG_VERSION = 7
 SOURCE_TABLES = ("Mount", "MountXDisplay", "MountTypeXCapability", "MountCapability", "CreatureDisplayInfo",
                  "CreatureModelData", "CreatureDisplayInfoGeosetData", "SpellMisc", "ItemEffect", "ItemXItemEffect",
                  "ItemSearchName", "CreatureSoundData", "FootstepTerrainLookup", "SoundKit", "SoundKitEntry",
                  "SpellVisualKitEffect", "SpellVisualKitModelAttach", "SpellVisualEffectName", "GradientEffect",
-                 "DissolveEffect", "TextureBlendSet")
+                 "DissolveEffect", "TextureBlendSet", "ParticleColor")
 SOURCES = {0: "Drop", 1: "Quest", 2: "Vendor", 3: "Profession", 4: "Pet battle", 5: "Achievement", 6: "World event",
            7: "Promotion", 8: "Trading card game", 9: "Shop", 10: "Discovery", 11: "Trading Post"}
 KINDS = ("ground", "flying")
@@ -54,6 +54,14 @@ FLIES = 0x2                                 # MountCapability.Flags: the capabil
 TABLES = ("Spell", "SpellIcon", "SkillLineAbility", "CreatureDisplayInfo", "CreatureModelData", "SoundEntries",
           "CreatureSoundData", "FootstepTerrainLookup")
 ITEM_TABLE = "ItemDisplayInfo"
+# A display's particle colours (CreatureDisplayInfo.ParticleColorID): the client gives a model's emitters
+# of colour slot 11-13 the row's start, middle and end colours (CCharacterComponent's ReplaceParticleColor;
+# a missing row turns them green). Retail's rows are 3.3.5's layout: ID, Start[3], MID[3], End[3] (ARGB).
+# 137 of 12.1.5's 1,912 mount displays have one - the Molten Cormaera's flames take all their colours
+# from it. A mount's row has its own id; an archive above Install's patch holding the table leaves the
+# colours out (the mount still goes in).
+PARTICLE_TABLE = "ParticleColor"
+PARTICLE_FIELDS = 10
 TEMPLATE_SPELL = {"ground": 23229, "flying": 32242}         # Swift Brown Steed, Swift Blue Gryphon
 TEMPLATE_MODEL = {"ground": "creature\\ridinghorse\\ridinghorse.mdx", "flying": "creature\\drakemount\\drakemount.mdx"}
 ITEM_ICONS = {"ground": ("ability_mount_ridinghorse", "inv_misc_key_14"),
@@ -268,6 +276,7 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
     kit_models = state_attachments(t)
     kit_gradients = state_gradients(t)
     kit_dissolves = state_dissolves(t)
+    particle_colors = {i: particle_colors_of(r) for i, r in t["ParticleColor"]}
 
     mounts, displays = [], {}
     for mid, r in t["Mount"]:
@@ -297,10 +306,23 @@ def build_catalog(src, log=lambda m: None) -> MountCatalog:
                            "state": kit_models.get(c.get("StateSpellVisualKitID") or 0, []),
                            "gradient": kit_gradients.get(c.get("StateSpellVisualKitID") or 0),
                            "dissolve": kit_dissolves.get(c.get("StateSpellVisualKitID") or 0),
-                           "bank": c.get("MountMaxBankingAngle")}
+                           "bank": c.get("MountMaxBankingAngle"),
+                           "particle": particle_colors.get(c.get("ParticleColorID") or 0)}
     sounds = sound_bundle(t, {v["sound"] for v in displays.values() if v["sound"]})
     log(f"{src.spec.label}: {len(mounts)} mounts, {len(sounds['kits'])} sound kits ({time.time() - t0:.0f} s)")
     return MountCatalog(src.key, src.build, mounts, displays, sounds)
+
+
+def particle_colors_of(row: dict) -> list[int] | None:
+    """A retail ParticleColor row's nine colours (Start, MID, End, three each) as 3.3.5's unsigned ARGB, else
+    None when the row isn't whole."""
+    out = []
+    for name in ("Start", "MID", "End"):
+        values = list(row.get(name) or [])
+        if len(values) != 3:
+            return None
+        out += [int(v) & 0xFFFFFFFF for v in values]
+    return out
 
 
 def state_attachments(t: dict[str, list]) -> dict[int, list[dict]]:
@@ -645,7 +667,8 @@ def owned_ids(ids: dict) -> dict[str, set[int]]:
     """Every id the registry gave, by table - an earlier install's rows, wherever a copy of them is."""
     mounts = {int(v["id"]) for v in ids["mounts"].values() if v.get("id")}
     return {"SoundEntries": set(ids["sounds"].values()), "FootstepTerrainLookup": set(ids["footsteps"].values()),
-            "CreatureSoundData": mounts, ITEM_TABLE: {int(v["display"]) for v in ids["mounts"].values() if v.get("display")}}
+            "CreatureSoundData": mounts, ITEM_TABLE: {int(v["display"]) for v in ids["mounts"].values() if v.get("display")},
+            PARTICLE_TABLE: mounts}
 
 
 # -- a mount as the client and server get it ------------------------------------------------------
@@ -678,6 +701,7 @@ class Ride:
     gradient: dict | None = None                 # its state kit's gradient shading (``state_gradients``)
     dissolve: dict | None = None                 # its state kit's dissolve (``state_dissolves``; layers' "path" once placed)
     bank: float | None = None                    # retail's MountMaxBankingAngle (degrees; 45 the usual)
+    particle: list[int] | None = None            # its ParticleColor row's nine colours (``PARTICLE_TABLE``; None: none)
 
 
 @dataclass
@@ -741,8 +765,8 @@ def skin_table(rides: list[Ride]) -> bytes | None:
 
 def display_row(cdi, r: Ride) -> list[int]:
     return [r.id, r.id, r.id if r.sound_kits is not None else 0, 0, f2u(r.scale or 1.0),
-            r.alpha if 0 < r.alpha <= 255 else 255, *(cdi.add_string(n) for n in r.textures[:3]), 0, 1, 0, 0, 0,
-            r.geosets, 0]
+            r.alpha if 0 < r.alpha <= 255 else 255, *(cdi.add_string(n) for n in r.textures[:3]), 0, 1, 0, 0,
+            r.id if r.particle else 0, r.geosets, 0]
 
 
 def sound_row(template: list[int] | None, r: Ride) -> list[int]:
@@ -853,6 +877,18 @@ def client_tables(base: dict[str, bytes], rides: list[Ride], icons: dict[int, st
            "CreatureSoundData": csd.to_bytes(), "FootstepTerrainLookup": ftl.to_bytes()}
     if ITEM_TABLE in base:
         out[ITEM_TABLE] = with_item_displays(base[ITEM_TABLE], rides, owned.get(ITEM_TABLE, set()))
+    if base.get(PARTICLE_TABLE):
+        pc = DBCFile.from_bytes(base[PARTICLE_TABLE])
+        if pc.field_count != PARTICLE_FIELDS:
+            raise ValueError(f"ParticleColor.dbc has {pc.field_count} fields - not a 3.3.5 client's")
+        drop = owned.get(PARTICLE_TABLE, set()) | ours          # an earlier install's rows go
+        pc.records = [row for row in pc.records if row[0] not in drop]
+        for r in rides:
+            if r.particle:
+                pc.add_record([r.id, *r.particle])
+        out[PARTICLE_TABLE] = pc.to_bytes()
+    elif any(r.particle for r in rides):
+        raise ValueError("a mount has particle colours but the client's ParticleColor.dbc wasn't read")
     return out
 
 

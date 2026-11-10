@@ -140,7 +140,8 @@ each (Azure, Golden, Regal...), and **Add all 10 versions** puts every one in th
 version is a mount of its own in game.
 
 Install puts retail's own models in its patch - the client draws them as they are - with retail's
-fourth skin, state-kit models, gradients, dissolves and banking angles where a mount has them. Every
+fourth skin, state-kit models, gradients, dissolves, banking angles and particle colours (the Molten
+Cormaera's flames take theirs from its display) where a mount has them. Every
 model and skin goes under `Creature\Retroport\` - an old horse or drake keeps its 3.3.5 model for the
 NPCs that use it - and each mount becomes:
 

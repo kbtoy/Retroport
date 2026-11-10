@@ -331,6 +331,13 @@ Placeholders ("[PH] ...") count only with the page's test-mounts box, or when it
   then each of three layers' path and scale/scroll), whose three layer textures Install packs
   in their own retail folders under `creature\retroport\`. The client draws only the dissolves with flag
   0x2000 (the Void mounts');
+- particle colours - a display's retail ParticleColor row (`mounts.particle_colors_of`: Start, MID,
+  End, three ARGB each - 3.3.5's layout; 137 of 12.1.5's 1,912 mount displays have one) goes in the
+  client's `ParticleColor.dbc` under the mount's own id, and its CreatureDisplayInfo.ParticleColorID
+  names it. The client gives a model's emitters of colour slot 11-13 those colours
+  (CharacterComponent.cpp `ReplaceParticleColor`); without them the Molten Cormaera's six flame
+  emitters lost theirs. Only stock locale archives hold the table, below Install's patch. An archive
+  above it holding the table leaves the colours out, with a note, and the mount still goes in;
 - CreatureModelData - the stock row of the same model stem (an old mount), else the kind's
   (RidingHorse / DrakeMount) for footprints and blood, with retail's size fields and
   ModelName `creature\retroport\...\<stem>.mdx`;
