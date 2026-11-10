@@ -414,10 +414,19 @@ function loadMount(pb, display) {
       v.clear();
       pb.textures.replaceChildren(...p.textures.map(f => textureThumb(S.source)({fdid: f, name: String(f)})));
       if (p.mesh) {
-        v.add(p.mesh, {texUrl: texUrl(S.source), particle: p.particle, visible: id => {
-          const want = p.geosets[Math.floor(id / 100)];
-          return want == null || id === want;
-        }});
+        // its state kit as the x64 client draws it: the gradient or dissolve over the mount, the kit's
+        // models (a banner, a mist) at their points, each scaled, turned, moved and faded as the kit says
+        const mount = v.add(p.mesh, {texUrl: texUrl(S.source), particle: p.particle,
+          fx: p.gradient || p.dissolve ? {gradient: p.gradient, dissolve: p.gradient ? null : p.dissolve} : null, visible: id => {
+            const want = p.geosets[Math.floor(id / 100)];
+            return want == null || id === want;
+          }});
+        // (no attachment, 255, is the base, 19 - the mount's root where it hasn't one)
+        for (const s of p.state || []) {
+          const id = s.attachment === 255 ? 19 : s.attachment;
+          v.add(s.mesh, {texUrl: texUrl(S.source), tint: [1, 1, 1, s.alpha ?? 1],
+                         attach: {part: mount, id, root: id === 19, local: Viewer.kitMatrix(s)}});
+        }
         v.fit("front");
       }
       v.canvas.hidden = !p.mesh;
@@ -1009,7 +1018,7 @@ function loadDisplay(pb, display, slot, from = null) {
     const v = pb.v, token = ++PV.token, source = from || S.source;
     pb.info.textContent = "Loading…";
     try {
-      const p = await api("/api/preview", {source, display, race: PV.race, sex: PV.sex});
+      const p = await api("/api/preview", {source, display, race: PV.race, sex: PV.sex, slot: slot || 0});
       if (token !== PV.token) return;
       pb.textures.replaceChildren(...p.body.map(textureThumb(source)));
       const cape = slot === BACK && p.row && p.row.model_types[0] === CAPE && p.row.materials[0];

@@ -175,7 +175,5 @@ ITEM_GEOSETS = {
 }
 # the order the client dresses a body in: later slots win a geoset group and draw over earlier textures
 DRESS_ORDER = (4, 7, 8, 9, 5, 20, 6, 10, 19, 16, 1, 3)
-# where an attached model hangs: inventory type -> M2 attachment id (shoulders by side below)
-ATTACH_POINTS = {1: 11, 6: 53, 16: 57, 5: 34, 20: 34, 7: 53, 8: 53, 10: 53, 13: 1, 21: 1, 17: 1, 22: 2, 23: 2,
-                 14: 0, 15: 2, 26: 1, 25: 1}
-SHOULDER_POINTS = {0: 6, 1: 5}          # ComponentModelFileData.PositionIndex 0 = left, 1 = right
+# where a held item hangs on the body: inventory type -> M2 attachment id (worn pieces: models.ITEM_POINTS)
+ATTACH_POINTS = {13: 1, 21: 1, 17: 1, 22: 2, 23: 2, 14: 0, 15: 2, 26: 1, 25: 1}
