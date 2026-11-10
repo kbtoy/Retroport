@@ -1,5 +1,5 @@
 "use strict";
-// The Stats step, between the basket and Install. The backport kit makes every piece a level-1
+// The Stats step, between the basket and Install. Install makes every piece a level-1
 // cosmetic copy; here each gets real stats. Item level, required level, quality and binding are set
 // for every piece; armor type and the role the stats are for too, unless a piece sets its own;
 // classes per piece. Stats are filled in by WotLK's own rules (wotlk.py's tables: the stat budget by

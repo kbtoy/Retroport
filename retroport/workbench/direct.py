@@ -1,8 +1,7 @@
-"""The workbench's second way in: retail's own items, straight into the x64 client and the server.
+"""How the workbench installs: retail's own items, straight into the client and the server.
 
-The backport kit (``kit``) turns each look into 3.3.5 files any 3.3.5a client draws. The x64 client
-(``WowClient64.exe``) draws retail's items itself, from retail's own tables and files, so this route
-hands it those as they are:
+The client (``edition.CLIENT_EXE``) draws retail's items itself, from retail's own tables and files,
+so Install hands it those as they are:
 
 * ``Data\\patch-Q.MPQ`` (``retailpack.patch_for``; patch-T in a client older than 2026-11-03, which
   reads only the top copy of the path tables) - retail's item tables (``retailpack.TABLES``, whole: the client reads any
@@ -15,14 +14,14 @@ hands it those as they are:
   item's id (``retailpack.entry_for``); the Stats step's numbers after it;
 * the basket's mounts (``mountpack``, route "direct"): retail's own models in their own folder and
   their sounds, the client's spell, creature and sound tables with their rows (in the same patch),
-  their items' bag icons (rows in the item display table on top - the item kit's patch, backed up:
-  ``mountpack.place_item_rows``), and their SQL (``retail-direct-mounts.sql``).
+  their items' bag icons (rows in the item display table on top - an older tool's item patch,
+  backed up: ``mountpack.place_item_rows``), and their SQL (``retail-direct-mounts.sql``).
 
-Nothing is converted, so there are no measurements, audit or Equip Plus pieces; a 32-bit 3.3.5
-client shows these items without a model. The server's dbc folder is left alone: AzerothCore keeps
-an item its Item.dbc doesn't have, and the x64 client takes the item's display from the server.
-Install backs up the patch it replaces (``<data>\\direct\\backups\\<time>\\install.json``, the kit's
-record format) and clears the client's Cache; Undo puts it back. It never runs SQL.
+Nothing is converted. A stock 3.3.5 client shows these items without a model. The server's dbc
+folder is left alone: AzerothCore keeps an item its Item.dbc doesn't have, and the client takes the
+item's display from the server. Install backs up the patch it replaces
+(``<data>\\direct\\backups\\<time>\\install.json``) and clears the client's Cache; Undo puts it back.
+It never runs SQL.
 """
 
 from __future__ import annotations
@@ -36,7 +35,8 @@ from dataclasses import asdict, dataclass, field
 
 from . import catalog as C
 from . import itemstats as IS
-from . import kit as K
+from . import edition
+from . import jobs as J
 from . import mountpack as MP
 from . import mounts as MT
 from . import retailpack as RP
@@ -99,7 +99,7 @@ class Files:
 
 
 class Direct:
-    """Retail direct: one job at a time, its output in ``lines`` (as ``kit.Kit``)."""
+    """Retail direct: one job at a time, its output in ``lines``."""
 
     def __init__(self, data_dir: str, listfile: str = ""):
         self.data_dir, self.listfile = data_dir, listfile
@@ -108,7 +108,7 @@ class Direct:
         self.source = None                   # retail, a local install (catalog.Source)
         self.lines: list[str] = []
         self.first = 0
-        self.job: K.Job | None = None
+        self.job: J.Job | None = None
         self.mount_catalog = lambda: None    # retail's mounts (the workbench sets it)
         self.mount_built = None              # the last build's mounts (mountpack.Built: the items' rows)
         self._lock = threading.Lock()
@@ -136,12 +136,12 @@ class Direct:
 
     def problems(self) -> list[str]:
         out = []
-        if not self.client or not K.is_x64_client(self.client):
-            out.append("Retail direct installs into the x64 client: choose its folder (with WowClient64.exe) in Settings")
+        if not self.client or not J.is_client(self.client):
+            out.append(f"Install puts items into {edition.CLIENT_NAME}: choose its folder (with {edition.CLIENT_EXE}) in Settings")
         if self.source is None or getattr(getattr(self.source, "spec", None), "kind", "") != "local":
-            out.append("Retail direct reads retail from your own install: set Retail items to \"My own install\" in Settings")
+            out.append("Install reads retail from your own install: set Retail items to \"My own install\" in Settings")
         if not self.listfile or not os.path.isfile(self.listfile):
-            out.append("Retail direct needs the community listfile (Settings)")
+            out.append("Install needs the community listfile (Settings)")
         return out
 
     def retail_build(self) -> str:
@@ -155,7 +155,7 @@ class Direct:
         if not os.path.isdir(root):
             return None
         for stamp in sorted(os.listdir(root), reverse=True):
-            rec = K._load_json(os.path.join(root, stamp, "install.json"))
+            rec = J.load_json(os.path.join(root, stamp, "install.json"))
             if rec:
                 return rec | {"backup": os.path.join(root, stamp)}
         return None
@@ -168,7 +168,7 @@ class Direct:
         return out
 
     def built_record(self) -> dict:
-        return K._load_json(os.path.join(self.work, "out", "build.json"), {}) or {}
+        return J.load_json(os.path.join(self.work, "out", "build.json"), {}) or {}
 
     def status(self, looks: set[str] | None = None, mounts: set[str] | None = None) -> dict:
         b, last = self.built_record(), self.last_install()
@@ -180,13 +180,13 @@ class Direct:
             b.get("build") == self.retail_build() and b.get("client") == self.cfg.client_data and \
             all(x["ok"] for x in steps)
         return {"route": "direct", "settings": asdict(self.cfg), "problems": self.problems(),
-                "project": {"build": self.retail_build()}, "retail_build": self.retail_build(), "local": True,
-                "patch_name": self.patch_name, "steps": steps, "job": asdict(self.job) if self.job else None, "sheets": "",
+                "retail_build": self.retail_build(),
+                "patch_name": self.patch_name, "steps": steps, "job": asdict(self.job) if self.job else None,
                 "sql": self.sql_files(), "last_install": last, "next_line": self.first + len(self.lines),
-                "selected": None, "equip_plus": {"installed": True, "wanted": True}, "built": built,
+                "built": built,
                 "installed": bool(built and last and last.get("time", "") >= b.get("time", "") and
                                   last.get("data") == self.cfg.client_data),
-                "measure": {"needed": False, "done": True}, "summary": b.get("summary") or {}}
+                "summary": b.get("summary") or {}}
 
     # -- output -----------------------------------------------------------------
     def say(self, text: str) -> None:
@@ -212,7 +212,7 @@ class Direct:
             raise RuntimeError(f"retail direct is busy ({self.job.name})")
         if self.problems():
             raise RuntimeError("; ".join(self.problems()))
-        self.job = K.Job(name)
+        self.job = J.Job(name)
         self.say("")
         self.say(f"=== {name} - retail direct ({time.strftime('%H:%M:%S')}) ===")
 
@@ -250,7 +250,7 @@ class Direct:
     def go(self, items: list[dict], plan: dict, install: bool = True) -> bool:
         """Build the patch and the SQL for what Install builds (``plan``: catalog.plan_basket of
         ``items``), then - ``install`` - put the patch in the client."""
-        if install and K.wow_running():
+        if install and J.wow_running():
             self.say("!! close World of Warcraft first")
             return False
         looks = self.looks_of(plan)
@@ -289,7 +289,7 @@ class Direct:
         record["summary"] = summary | {"items": len(pieces), "sql": sql, "mounts": len(files.rides),
                                        "mounts_sql": mounts_sql}
         record["entries"] = {str(p.display): p.entry for p in pieces}
-        K._save_json(os.path.join(self.work, "out", "build.json"), record)
+        J.save_json(os.path.join(self.work, "out", "build.json"), record)
         if not install:
             self.say("Built. Install puts the patch in your client.")
             return True
@@ -301,7 +301,7 @@ class Direct:
         if cat is None:
             raise ValueError("retail's mounts are still loading - try again in a minute")
         self.say(f"Making {len(rides)} mount(s) from retail's own files")
-        built = MP.build(rides, cat, self.source, self.client, "direct", self.patch_name, self.data_dir, self.listfile,
+        built = MP.build(rides, cat, self.source, self.client, self.patch_name, self.data_dir, self.listfile,
                          self.say, self._step)
         for fdid, (kind, path) in built.paths.items():
             files.kinds.setdefault(fdid, kind)
@@ -408,7 +408,7 @@ class Direct:
                                        **RP.item_fields(r), label=label))
                 if display in dbc_displays:
                     self.say(f"!  {look.get('name')}: display {display} is a row of your client's ItemDisplayInfo.dbc "
-                             "(3.3.5's own or the kit's) - the x64 client draws that row, not retail's")
+                             "(3.3.5's own or an older tool's) - the x64 client draws that row, not retail's")
             self._save_ids(ids)
 
             # the files: each display's models (every race and sex) and textures, each model's own
@@ -594,7 +594,7 @@ class Direct:
             text += f"\n-- Retroport Workbench, the Stats step: levels, stats, armor, damage, sockets ({len(stats)} items)\n" + \
                     "\n".join(stats) + "\n"
         if edits.get("sets"):
-            self.say("   (item sets from the Stats step need ItemSet.dbc rows - the kit's route only)")
+            self.say("   (item sets from the Stats step need ItemSet.dbc rows, which Install doesn't make yet)")
         with open(path + ".part", "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
         os.replace(path + ".part", path)
@@ -606,7 +606,7 @@ class Direct:
     def install(self, patch: str, items: list[dict], sql: str, mounts: list | None = None) -> bool:
         if self.job:
             self.job.step = "install"
-        if K.wow_running():
+        if J.wow_running():
             self.say("!! close World of Warcraft first")
             return False
         data = self.cfg.client_data
@@ -643,7 +643,7 @@ class Direct:
         self.check_shadowed(name)
         built = self.mount_built
         if built is not None and mounts:
-            try:                                     # the mount items' bag icons: in the item kit's patch, say
+            try:                                     # the mount items' bag icons: in an older item patch, say
                 MP.place_item_rows(self.client, name, built.rides, built.item_ids, backup, record, self.say)
             except Exception as e:                   # the record is still saved: Undo works
                 self.say(f"!! the mount items' icons: {type(e).__name__}: {e}")
@@ -651,7 +651,7 @@ class Direct:
         if os.path.isdir(cache):
             shutil.rmtree(cache, ignore_errors=True)
             self.say("   cleared the client's Cache folder")
-        K._save_json(os.path.join(backup, "install.json"), record)
+        J.save_json(os.path.join(backup, "install.json"), record)
         self.say("Installed. Apply the SQL to your world database, restart the worldserver, then log in "
                  "with the x64 client:")
         for p in self.sql_files():
@@ -670,7 +670,7 @@ class Direct:
         if not rec:
             self.say("!! Install first: the check reads the models your client has")
             return False
-        if K.wow_running():
+        if J.wow_running():
             self.say("!! close World of Warcraft first")
             return False
         from ..mpq import MPQ
@@ -710,7 +710,7 @@ class Direct:
                  f"up to {timeout // 60 + 1} min)")
         started = time.time()
         import subprocess
-        proc = subprocess.Popen([os.path.join(client, "WowClient64.exe"), "-windowed"], cwd=client, env=env)
+        proc = subprocess.Popen([os.path.join(client, edition.CLIENT_EXE), "-windowed"], cwd=client, env=env)
         try:
             while proc.poll() is None:
                 if self.job and self.job.state == "stopped":
@@ -753,7 +753,7 @@ class Direct:
             b.setdefault("summary", {})["client_check"] = {
                 "time": time.strftime("%Y%m%d-%H%M%S"), "models": len(results), "same": len(same),
                 "differs": [k for k, _ in differs], "failed": [k for k, _ in failed]}
-            K._save_json(os.path.join(self.work, "out", "build.json"), b)
+            J.save_json(os.path.join(self.work, "out", "build.json"), b)
         return after == crashes                      # what it found is in the notes; a crash fails the job
 
     def write_view_list(self, files: Files) -> str:
@@ -834,7 +834,7 @@ class Direct:
         if not rec:
             self.say("there is no install to undo")
             return False
-        if K.wow_running():
+        if J.wow_running():
             self.say("!! close World of Warcraft first")
             return False
         backup, data = rec["backup"], rec.get("data") or self.cfg.client_data
@@ -843,11 +843,11 @@ class Direct:
             if fp and os.path.isfile(os.path.join(data, n)) and MP._fingerprint(os.path.join(data, n)) != fp:
                 self.say(f"   client: {n} changed after this install (another one replaced it) - left as it is")
                 continue
-            K._remove_any(os.path.join(data, n))
+            J.remove_any(os.path.join(data, n))
             shutil.copy2(os.path.join(backup, "client", n), os.path.join(data, n))
             self.say(f"   client: put back {n}")
         for p in rec.get("added", []):
-            K._remove_any(p)
+            J.remove_any(p)
             self.say(f"   client: removed {p}")
         os.replace(os.path.join(backup, "install.json"), os.path.join(backup, "install.json.undone"))
         self.say("Undone. Clear the client's Cache folder; the SQL rows stay (without the patch the x64 client "
@@ -856,9 +856,9 @@ class Direct:
 
     # -- the entries this route gave ----------------------------------------------
     def _ids(self) -> dict:
-        got = K._load_json(os.path.join(self.work, "ids.json"), {}) or {}
+        got = J.load_json(os.path.join(self.work, "ids.json"), {}) or {}
         return {"spare": {str(k): int(v) for k, v in (got.get("spare") or {}).items()},
                 "owned": [tuple(int(x) for x in p) for p in got.get("owned") or []]}
 
     def _save_ids(self, ids: dict) -> None:
-        K._save_json(os.path.join(self.work, "ids.json"), {"spare": ids["spare"], "owned": [list(p) for p in ids["owned"]]})
+        J.save_json(os.path.join(self.work, "ids.json"), {"spare": ids["spare"], "owned": [list(p) for p in ids["owned"]]})

@@ -1,5 +1,5 @@
 """Game data from wago.tools, for anyone without a local install: a build's tables as wago's CSV
-and its files by FileDataID - what the retail backport kit itself reads. Retail at its newest live
+and its files by FileDataID. Retail at its newest live
 build (or a pinned one) for the items; BfA 8.3.7 for the bodies the character view dresses.
 
 Everything fetched is kept on disk (``<cache>/wago/<build>/``), so a table or a file is asked for

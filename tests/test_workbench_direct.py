@@ -11,7 +11,7 @@ from retroport.dbc import DBCFile
 from retroport.mpq import MPQ, write_archive
 from retroport.workbench import direct as DR
 from retroport.workbench import itemstats as IS
-from retroport.workbench import kit as K
+from retroport.workbench import jobs as J
 from retroport.workbench import retailpack as RP
 from retroport.workbench import server as SV
 
@@ -188,7 +188,7 @@ def _direct(tmp_path, monkeypatch):
     listfile.write_text("".join(f"{k};{v}\n" for k, v in LISTFILE.items()))
     d = DR.Direct(str(tmp_path / "data"), str(listfile))
     d.client, d.source = str(_client(tmp_path)), FakeRetail()
-    monkeypatch.setattr(K, "wow_running", lambda: False)
+    monkeypatch.setattr(J, "wow_running", lambda: False)
     return d
 
 
@@ -291,17 +291,10 @@ def test_a_table_of_another_layout_stops_the_build(tmp_path, monkeypatch):
 
 
 # -- the workbench ----------------------------------------------------------------------------------
-def test_settings_route_picks_what_install_runs():
-    kit, direct = types.SimpleNamespace(busy=lambda: False), types.SimpleNamespace(busy=lambda: False)
-    wb = types.SimpleNamespace(settings=types.SimpleNamespace(route=""), kit=kit, direct=direct)
-    assert SV.Workbench.runner(wb) is kit
-    wb.settings.route = "direct"
-    assert SV.Workbench.runner(wb) is direct
+def test_install_builds_everything_in_one_go():
+    wb = types.SimpleNamespace(direct=types.SimpleNamespace(busy=lambda: False))
     with pytest.raises(ValueError, match="one go"):
-        SV.Workbench.run_direct(wb, "rerun")
-    kit.busy = lambda: True
-    with pytest.raises(RuntimeError, match="busy"):
-        SV.Workbench.run_direct(wb, "go")
+        SV.Workbench.run(wb, "rerun")
 
 
 # -- which patch, and what stands with it (0.5.0) -------------------------------------------------

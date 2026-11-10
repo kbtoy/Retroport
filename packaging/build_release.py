@@ -1,22 +1,21 @@
-"""Build Retroport Workbench's release: a folder anyone can unpack and run, and a zip of it.
+"""Build the Workbench's release (this edition's: ``edition.NAME``): a folder anyone can unpack and
+run, and a zip of it.
 
-    Retroport Workbench/
-      Retroport Workbench.exe   the launcher (packaging/launcher.cs, built with Windows' own C# compiler)
-      runtime/                  Python's official embeddable package, with retroport's dependencies and
-                                numpy (the backport kit needs it)
+    Retroport Workbench x64/
+      Retroport Workbench x64.exe   the launcher (packaging/launcher.cs, built with Windows' own C# compiler)
+      runtime/                  Python's official embeddable package, with retroport's dependencies
       app/                      the workbench's code: retroport and its copy of wotlkconv, as source
       README.txt, THIRD_PARTY_NOTICES.md, licenses/
 
 It downloads Python's embeddable package from python.org and the dependencies' wheels from PyPI,
-at the versions pinned below (the ones the workbench is tested with). It never contains the retail
-backport kit or Equip Plus - the workbench fetches them from their own GitHub on first use - nor
-anything of Blizzard's: game data comes from wago.tools or the user's own installs at run time, and
+at the versions pinned below (the ones the workbench is tested with). It never contains anything of
+Blizzard's: game data comes from wago.tools or the user's own installs at run time, and
 the glue screen files (retroport/glue/ui, modified from Blizzard's UI code) are left out.
 
 The folder is checked before it's zipped: its own Python imports the workbench and starts it.
 
 usage:  python packaging/build_release.py [--out dist]
-        python packaging/build_release.py --launcher-only     (Retroport Workbench.exe in this checkout,
+        python packaging/build_release.py --launcher-only     (the launcher exe in this checkout,
                                                               running the pythonw on PATH)
 """
 
@@ -36,11 +35,12 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-NAME = "Retroport Workbench"
+sys.path.insert(0, REPO)
+from retroport.workbench.edition import NAME  # noqa: E402  (the edition names its release)
 PYTHON = "3.14.2"                                       # the embeddable package (its x.y names the wheels)
 # its sha256 (the file python.org's downloads API gives MD5 85a5dcd0350f7ca4e2876295b0b281e3 for)
 PYTHON_SHA256 = "f05e28d161c6b15af64a7cb7f08b4a22b3a6b03eee71baee24ea557b3bdd5798"
-REQUIREMENTS = ["pydantic==2.13.3", "typer==0.25.1", "rich==15.0.0", "pillow==12.2.0", "numpy==2.4.6"]
+REQUIREMENTS = ["pydantic==2.13.3", "typer==0.25.1", "rich==15.0.0", "pillow==12.2.0"]
 CSC = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe")
 
 
@@ -83,8 +83,13 @@ def launcher(dest_exe: str, work: str) -> None:
     if not os.path.isfile(CSC):
         raise SystemExit(f"no C# compiler at {CSC} (.NET Framework 4 comes with Windows 10 and 11)")
     ico = icon(os.path.join(work, "icon.ico"))
+    source = os.path.join(work, "launcher.cs")              # the launcher named as this edition
+    with open(os.path.join(HERE, "launcher.cs"), encoding="utf-8") as fh:
+        text = fh.read().replace("Retroport Workbench", NAME)
+    with open(source, "w", encoding="utf-8") as fh:
+        fh.write(text)
     cmd = [CSC, "/nologo", "/target:winexe", "/optimize+", f"/win32icon:{ico}", f"/out:{dest_exe}",
-           "/reference:System.Windows.Forms.dll", os.path.join(HERE, "launcher.cs")]
+           "/reference:System.Windows.Forms.dll", source]
     out = subprocess.run(cmd, capture_output=True, text=True)
     if out.returncode != 0:
         raise SystemExit(f"the launcher did not build:\n{out.stdout}{out.stderr}")
@@ -144,7 +149,7 @@ def notices(dest: str) -> None:
 def check(dest: str) -> None:
     """The folder's own Python imports the workbench and serves its page."""
     py = os.path.join(dest, "runtime", "python.exe")
-    code = ("import numpy, PIL, retroport.workbench.app, retroport.workbench.kitlocal, retroport.workbench.runscript;"
+    code = ("import PIL, retroport.workbench.app, retroport.workbench.direct, retroport.workbench.mountpack;"
             "print('imports ok')")
     out = subprocess.run([py, "-c", code], capture_output=True, text=True, cwd=dest)
     if out.returncode != 0:
@@ -166,7 +171,7 @@ def check(dest: str) -> None:
                     meta = json.load(r)
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
                     page = r.read()
-                if meta.get("slots") and b"Retroport Workbench" in page:
+                if meta.get("slots") and NAME.encode() in page:
                     say("  the release's workbench serves its page")
                     return
             except OSError:
@@ -200,7 +205,7 @@ def main() -> int:
         try:
             os.rename(dest, old)
         except OSError:
-            raise SystemExit(f"{dest} is in use - close the Retroport Workbench running from it, then build again")
+            raise SystemExit(f"{dest} is in use - close the {NAME} running from it, then build again")
         shutil.rmtree(old, ignore_errors=True)
     os.makedirs(dest)
     say(f"Building {NAME} {ver} in {dest}")
@@ -213,7 +218,7 @@ def main() -> int:
     launcher(os.path.join(dest, f"{NAME}.exe"), work)
     say("check:")
     check(dest)
-    archive = os.path.join(a.out, f"Retroport-Workbench-{ver}-win64.zip")
+    archive = os.path.join(a.out, f"{NAME.replace(' ', '-')}-{ver}-win64.zip")
     say(f"zip: {archive}")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for d, _dirs, files in os.walk(dest):

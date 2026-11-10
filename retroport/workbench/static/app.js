@@ -526,7 +526,7 @@ function removeEntries(keys, what) {
 function appState(st) {
   if (st.app) {
     $("#app-version").textContent = "v" + st.app.version.replace(" (source)", "");
-    $("#app-version").title = `Retroport Workbench ${st.app.version}\nrunning from ${st.app.from}`;
+    $("#app-version").title = `${(st.edition || {}).name || "Retroport Workbench"} ${st.app.version}\nrunning from ${st.app.from}`;
   }
   if (S.instance && st.instance && st.instance !== S.instance) return location.reload();
   S.instance = S.instance || st.instance;
@@ -586,7 +586,7 @@ async function refreshBasket() {
   if (S.view === "backport") loadKit();
 }
 
-// The basket page: each entry with the looks it brings (the kit builds one per model), what it
+// The basket page: each entry with the looks it brings (Install makes one per model), what it
 // shares with another entry, and what changed since the install in your client.
 async function renderBasket() {
   const token = S.planToken = (S.planToken || 0) + 1;
@@ -602,7 +602,6 @@ async function renderBasket() {
     "The next install adds what you put here to your game.";
   renderGame(plan);
   renderHistory(plan.history || []);
-  renderForeign();
   if (!n) {
     $("#basket-list").replaceChildren(el("div", {class: "empty"}, "Nothing picked yet. Use + on any item or set."));
     return;
@@ -613,27 +612,6 @@ async function renderBasket() {
     return rows.length ? el("div", {class: "basket-group"}, el("h3", {}, `${title} (${rows.length})`), rows.map(e => basketRow(e, plan))) : null;
   }).filter(Boolean));
   if (plan.entries.some(e => e.state === "loading")) setTimeout(() => { if (S.view === "basket") renderBasket(); }, 1500);
-}
-// looks the kit's project built outside the workbench (the Backport Helper adds to the same project)
-async function renderForeign() {
-  let foreign = [];
-  try { foreign = await api("/api/basket/foreign"); } catch (e) { /* no project yet */ }
-  const box = $("#basket-foreign");
-  if (!foreign.length) { box.replaceChildren(); return; }
-  box.replaceChildren(el("div", {class: "panel foreign"},
-    el("div", {}, el("b", {}, `Your backport project has ${plural(foreign.length, "look")} that aren't in your basket`),
-      " - made with the Backport Helper, or put in before the workbench kept track. An install builds what's in the basket, so ",
-      "it would take them out of your game. Bring them into the basket to keep them."),
-    el("div", {class: "strip"}, foreign.slice(0, 40).map(f => { const b = icon(f.icon, f.quality, "sm", f.source); b.title = f.name; return b; })),
-    el("div", {class: "actions"},
-      el("button", {class: "btn", onclick: () => {
-        for (const f of foreign) if (!inBasket(keyOf(f))) S.basket.push(f);
-        saveBasket(); toast(`${plural(foreign.length, "look")} back in the basket`);
-      }}, "Bring them into the basket"),
-      el("button", {class: "btn ghost", onclick: async () => {
-        if (!confirm(`Let ${plural(foreign.length, "look")} go? The next install takes them out of your game.`)) return;
-        try { await post("/api/kit/let-go", {looks: foreign.map(f => f.id)}); renderBasket(); } catch (e) { toast(e.message); }
-      }}, "Let them go"))));
 }
 function basketRow(e, plan) {
   const looks = e.looks;
@@ -664,29 +642,6 @@ function basketRow(e, plan) {
           catch (err) { toast(err.message); } }}, "put back")])) : null,
       warn ? el("div", {class: "warnline"}, warn) : null),
     el("button", {class: "remove", title: "Remove from the basket", onclick: () => removeEntries([e.key], e.name)}, "×"));
-}
-
-// what the kit's audit said: helms that sit a little off (Install goes on), and what stopped it
-function renderAudit(a, running) {
-  const leave = (g, out) => el("button", {class: "btn ghost small-btn", disabled: running || !g.display, onclick: async () => {
-    try { await post("/api/basket/leave-out", {display: g.display, out}); toast(out ? `${g.name} left out - Install again` : `${g.name} put back`);
-          await refreshBasket(); } catch (e) { toast(e.message); }
-  }}, out ? "Leave this piece out" : "Put it back");
-  const row = (g, cls, words) => el("div", {class: "audit-row " + cls},
-    el("div", {}, el("b", {}, g.name), " ", el("span", {class: "muted"}, words(g)), " ", g.display ? leave(g, true) : null),
-    el("details", {}, el("summary", {class: "muted small"}, "what the kit's audit says"),
-      el("pre", {class: "small"}, g.lines.join("\n"))));
-  const fails = a.fails || [], warns = a.warnings || [];
-  $("#k-audit").replaceChildren(
-    ...(fails.length ? [el("div", {class: "warnline"}, `The kit's audit stopped the install: ${plural(fails.length, "piece")} ` +
-        "would be broken in game. Leave them out and Install again - or take them out of the basket.")] : []),
-    ...fails.map(g => row(g, "bad", g => g.gates.join(", "))),
-    ...(warns.length ? [el("div", {class: "muted"}, `The last build has ${plural(warns.length, "warning")} - Install goes on with ` +
-        "it: a helm sits a little off on some bodies (look at its picture in the ",
-        el("a", {href: "#", onclick: ev => { ev.preventDefault(); openSheets(); }}, "preview pictures folder"),
-        "; leave it out if it looks wrong)")] : []),
-    ...warns.map(g => row(g, "warn", g => g.bodies.length ? `on ${g.bodies.join(", ")}` : "")));
-  $("#k-audit").hidden = !(fails.length || warns.length);
 }
 
 // ---------------------------------------------------------------------------- settings
@@ -737,86 +692,32 @@ function stLocalDeps() {
   $$("#st-sources .field[data-key=dbd], #st-sources .field[data-key=listfile]").forEach(f => f.hidden = !any);
 }
 function renderSettings() {
-  const v = ST.v, k = v.kit;
+  const v = ST.v, check = v.checks.install;
   $("#st-welcome").hidden = !v.first_run;
   $("#st-data").textContent = v.data_dir;
   $("#st-game").replaceChildren(
-    stField("client", "3.3.5a client folder", v.client, {hint: "the folder with Wow.exe (or the x64 client's WowClient64.exe) and Data"}),
-    stField("server_dbc", "Server dbc folder (optional)", v.server_dbc,
-            {hint: "Install adds the new items to Item.dbc and ItemDisplayInfo.dbc here. Empty: the server is left alone.",
-             placeholder: "e.g. D:\\AzerothCore\\Data\\dbc"}));
-  const route = v.route || "kit", routeCheck = v.checks.route;
-  const routeChoice = (val, label, sub) => [el("label", {class: "check"},
-    el("input", {type: "radio", name: "st-route", value: val, checked: route === val}), " " + label),
-    el("span", {class: "fhint muted route-sub"}, sub)];
-  $("#st-route").replaceChildren(el("div", {class: "choice"},
-    ...routeChoice("kit", "Backport kit", "Converts each look for any 3.3.5a client, 32-bit or x64 (Equip Plus adds the 3D pieces)."),
-    ...routeChoice("direct", "Retail direct", "Retail's own items, as they are, into the x64 client, and item SQL for your " +
-                   "server: nothing converted, so nothing to measure or audit."),
-    routeCheck ? el("span", {class: "fcheck " + (routeCheck[0] ? "ok" : "warn")}, (routeCheck[0] ? "✓ " : "! ") + routeCheck[1]) :
-      el("span", {class: "fhint muted"}, v.direct.x64 ? "Your client is the x64 client: either way works." :
-        "Retail direct needs the x64 client (WowClient64.exe) and retail read from your own install."),
-    el("span", {class: "fhint muted"}, "Each way keeps its own install and Undo. Retail direct's items show retail's own " +
-       "looks, which a 32-bit client can't draw; it builds in " + v.direct.work + ".")));
+    stField("client", "x64 client folder", v.client, {hint: "the folder with WowClient64.exe and Data"}),
+    check ? el("span", {class: "fcheck " + (check[0] ? "ok" : "warn")}, (check[0] ? "✓ " : "! ") + check[1]) : null,
+    el("span", {class: "fhint muted"}, "Install puts retail's own items into this client and writes their SQL for your " +
+       "server; it keeps its install, history and Undo in " + v.direct.work + "."));
   const bfaBrowse = el("label", {class: "check"}, el("input", {type: "checkbox", id: "st-bfa-browse", checked: v.bfa.browse}),
                        " Also browse BfA's items (a second tab)");
   $("#st-sources").replaceChildren(
-    stChoice("retail", "Retail items", "Everything you browse and backport.", "Retail install folder"),
+    stChoice("retail", "Retail items", "Everything you browse and install - Install reads them from your own install.",
+             "Retail install folder"),
     stChoice("bfa", "BfA 8.3.7", "The bodies the character view dresses items on.", "BfA 8.3.7 install folder", bfaBrowse),
     stField("dbd", "WoWDBDefs definitions folder", v.dbd, {hint: "a local install's tables are read with these (github.com/wowdev/WoWDBDefs)"}),
     stField("listfile", "Community listfile", v.listfile, {file: true, patterns: [["Listfile", "*.csv;*.txt"]],
             hint: "names a local install's files (github.com/wowdev/wow-listfile)"}));
   stLocalDeps();
-  $("#st-kit").replaceChildren(
-    stField("work", "Project folder", k.work, {hint: "where the kit builds; Install makes it if it's new"}),
-    el("div", {class: "field"}, el("span", {class: "flabel"}, "The kit and Equip Plus's tools"),
-      el("span", {class: "fhint muted"}, "The workbench's own copies, the same for everyone - downloaded from their " +
-         "authors' GitHub by the first Install, at the commits this workbench is checked with:"),
-      ...Object.values(k.own || {}).map(o => el("span", {class: "fcheck " + (o.have ? "ok" : "")},
-        `${o.have ? "✓" : "•"} ${o.label} - github.com/${o.repo} at ${o.ref}` + (o.have ? "" : " (Install downloads it)")))),
-    el("label", {class: "check"}, el("input", {type: "checkbox", id: "st-local", checked: k.local}),
-       " The kit reads retail from my install when its project's build matches"),
-    (() => {
-      const found = v.checks.equip_plus;
-      return el("div", {class: "field"}, el("span", {class: "flabel"}, "3D armor pieces (Equip Plus)"),
-        el("span", {class: "frow"}, el("select", {id: "st-equip_plus"},
-          [["auto", "When my client has Equip Plus"], ["on", "Always"], ["off", "Never"]].map(([val, label]) =>
-            el("option", {value: val, selected: (k.equip_plus || "auto") === val}, label)))),
-        found ? el("span", {class: "fcheck " + (found[0] ? "ok" : "warn")}, (found[0] ? "✓ " : "! ") + found[1]) : null);
-    })(),
-    el("label", {class: "check"}, el("input", {type: "checkbox", id: "st-armor_pieces", checked: k.armor_pieces}),
-       " Equip Plus: HD-skinned armor pieces too"),
-    (() => {
-      const ep = v.equip_plus;
-      if (!ep || !ep.installed) return el("div", {class: "fhint muted"},
-        "Live physics and better fit are options of Equip Plus in your client - it isn't there.");
-      if (ep.builtin) return el("div", {class: "fhint muted"},
-        "The x64 client draws Equip Plus's pieces itself; its live physics and fit options aren't in it yet.");
-      const box = (id, on, label, hint) => el("label", {class: "check", title: hint},
-        el("input", {type: "checkbox", id, checked: on, disabled: id === "st-ep-physics" && !ep.physics}), " " + label);
-      return el("div", {class: "field"},
-        el("span", {class: "flabel"}, "Equip Plus in your client (saved in its WXLExtendedEquipment.ini)"),
-        box("st-ep-physics", ep.options.physics, "Live physics (experimental): plumes, ribbons and chains swing",
-            "Retail's own physics engine, as the kit ports it - Equip Plus 1.3.0 runs it; also in its F9 panel in game"),
-        box("st-ep-pivots", ep.options.pivots, "Better fit: move retail pieces' parts to the body's matching bones", "[Fit] RetargetPivots"),
-        box("st-ep-scale", ep.options.scale, "Better fit: size retail pieces to the body's skeleton", "[Fit] RetargetScale"),
-        ep.physics ? el("span", {class: "fhint muted"}, "Pieces get their physics data when they're installed with Equip Plus 1.3.0's tools.")
-                   : el("span", {class: "fcheck warn"}, "! Your client's Equip Plus is older than 1.3.0 - live physics needs 1.3.0 " +
-                                                       "(github.com/TheDaveCalaz/wxl-equip-plus/releases)"));
-    })());
 }
 async function saveSettings() {
   const val = id => ($("#st-" + id) || {value: ""}).value.trim();
   const kind = key => ($(`input[name=st-kind-${key}]:checked`) || {value: "wago"}).value;
-  const body = {client: val("client"), server_dbc: val("server_dbc"),
+  const body = {client: val("client"),
     retail: {kind: kind("retail"), path: val("retail-path")},
     bfa: {kind: kind("bfa"), path: val("bfa-path"), browse: $("#st-bfa-browse").checked},
-    dbd: val("dbd"), listfile: val("listfile"),
-    route: ($("input[name=st-route]:checked") || {value: "kit"}).value,
-    kit: {work: val("work"), local: $("#st-local").checked,
-          armor_pieces: $("#st-armor_pieces").checked, equip_plus: $("#st-equip_plus").value}};
-  if ($("#st-ep-physics")) body.equip_plus_options = {physics: $("#st-ep-physics").checked, pivots: $("#st-ep-pivots").checked,
-                                                       scale: $("#st-ep-scale").checked};
+    dbd: val("dbd"), listfile: val("listfile")};
   $("#st-save").disabled = true;
   try {
     ST.v = await post("/api/settings", body);
@@ -828,12 +729,12 @@ async function saveSettings() {
   finally { $("#st-save").disabled = false; }
 }
 
-// ---------------------------------------------------------------------------- backport (the kit)
-// One button: Install builds what the basket needs (the kit's steps, only those not done for it)
-// and installs it. Settings and the steps themselves are folded away below.
+// ---------------------------------------------------------------------------- install
+// One button: Install builds the patch and the SQL for what the game will have (retail's own files,
+// nothing converted) and puts the patch in the client. Its steps are folded away below.
 const K = {status: null, since: 0, follow: true, timer: null, logLoaded: false, was: false};
 async function loadKit() {
-  try { K.status = await api("/api/kit"); }
+  try { K.status = await api("/api/install"); }
   catch (e) { $("#k-data").textContent = e.message; return scheduleKit(); }
   if (!K.logLoaded) { K.logLoaded = true; await pollKitLog(); }
   const running = kitRunning();
@@ -854,7 +755,7 @@ function scheduleKit() {
 }
 async function pollKitLog() {
   try {
-    const r = await api("/api/kit/log", {since: K.since});
+    const r = await api("/api/install/log", {since: K.since});
     if (r.lines.length) {
       const pre = $("#k-log");
       pre.textContent = (pre.textContent + r.lines.join("\n") + "\n").slice(-400000);
@@ -866,12 +767,11 @@ async function pollKitLog() {
 const slash = p => p.replace(/\\/g, "/");
 function stepWords(step) {
   if (step === "install") return "Put the patch in your client";
-  if (step === "create") return "Create the kit's project";
   const x = K.status && K.status.steps.find(x => x.step === step);
   return x ? x.words : step;
 }
 function renderKit() {
-  const st = K.status, c = st.settings, running = kitRunning(), j = st.job, direct = st.route === "direct";
+  const st = K.status, c = st.settings, running = kitRunning(), j = st.job;
   const pl = st.plan || {basket: S.basket.length, adds: S.basket.length, in_game: 0, take_out: 0, builds: S.basket.length};
   const n = pl.builds, last = st.last_install;
 
@@ -891,76 +791,54 @@ function renderKit() {
       el("a", {href: "#", onclick: ev => { ev.preventDefault(); show("basket"); }}, n ? "Review the basket" : "Go to the basket")));
   const toSettings = text => el("a", {href: "#", onclick: ev => { ev.preventDefault(); show("settings"); }}, text);
   $("#k-where").replaceChildren(
-    el("div", {}, el("span", {class: "k"}, "Way"), direct ? "Retail direct - retail's own items into the x64 client" :
-      "Backport kit - converted for any 3.3.5a client", " ", toSettings("change")),
     el("div", {}, el("span", {class: "k"}, "Client"), c.client_data || el("span", {class: "warn"}, "not set"), " ", toSettings("change")),
-    direct ? el("div", {}, el("span", {class: "k"}, "Server"), el("span", {class: "muted"}, "item SQL for you to apply (its dbc folder is left alone)")) :
-    el("div", {}, el("span", {class: "k"}, "Server"), c.server_dbc ||
-      el("span", {class: "muted"}, "left alone - set its dbc folder in Settings to add the items there too"),
-      c.server_dbc ? " " : "", c.server_dbc ? toSettings("change") : ""));
+    el("div", {}, el("span", {class: "k"}, "Server"), el("span", {class: "muted"}, "item SQL for you to apply (its dbc folder is left alone)")));
   const notes = [];
-  if (direct) {
-    if (st.retail_build) notes.push(`<span class="ok">✓</span> Retail ${st.retail_build}'s own tables and files, straight from ` +
-      `your local install into ${st.patch_name} - nothing converted.`);
-    const sm = st.summary || {};
-    if (sm.files) notes.push(`Last build: ${plural(sm.items || 0, "item")}, ${plural(sm.files, "file")} (${sm.mb} MB)` +
-      (sm.unreadable ? `, <span class="warn">${sm.unreadable} unreadable from your install</span>` : "") + ".");
-    const cc = sm.client_check;
-    if (cc) notes.push((cc.failed.length ? `<span class="warn">!</span> ` : `<span class="ok">✓</span> `) +
-      `Checked in the client ${when(cc.time)}: ${cc.same} of ${plural(cc.models, "model")} read as retail has them` +
-      (cc.differs.length ? `, ${cc.differs.length} drawn differently` : "") +
-      (cc.failed.length ? `, <span class="warn">${cc.failed.length} not read</span> (the log names them)` : "") + ".");
-  } else if (st.project) {
-    if (st.local) notes.push(`<span class="ok">✓</span> Retail ${st.project.build} straight from your local install.`);
-    else if (c.local && st.retail_build) notes.push(`<span class="warn">!</span> The kit's project is pinned to retail ${st.project.build}; ` +
-      `your install is ${st.retail_build}, so its files come from wago.tools.`);
-  }
+  if (st.retail_build) notes.push(`<span class="ok">✓</span> Retail ${st.retail_build}'s own tables and files, straight from ` +
+    `your local install into ${st.patch_name} - nothing converted.`);
+  const sm = st.summary || {};
+  if (sm.files) notes.push(`Last build: ${plural(sm.items || 0, "item")}, ${plural(sm.files, "file")} (${sm.mb} MB)` +
+    (sm.unreadable ? `, <span class="warn">${sm.unreadable} unreadable from your install</span>` : "") + ".");
+  const cc = sm.client_check;
+  if (cc) notes.push((cc.failed.length ? `<span class="warn">!</span> ` : `<span class="ok">✓</span> `) +
+    `Checked in the client ${when(cc.time)}: ${cc.same} of ${plural(cc.models, "model")} read as retail has them` +
+    (cc.differs.length ? `, ${cc.differs.length} drawn differently` : "") +
+    (cc.failed.length ? `, <span class="warn">${cc.failed.length} not read</span> (the log names them)` : "") + ".");
   for (const p of st.problems) notes.push(`<span class="warn">!</span> Settings: ${p}`);
   if (st.mount_problem) notes.push(`<span class="warn">!</span> ${st.mount_problem}`);
   if (st.mount_stale) notes.push(`<span class="warn">!</span> ${st.mount_stale.join(", ")} changed after your mounts went in ` +
     `(a race package installed again?): its new spell, creature and sound rows are hidden until you Install again.`);
   if (st.mount_icons_gone) notes.push(`<span class="warn">!</span> ${st.mount_icons_gone.join(", ")} was replaced after your ` +
     `mounts went in (another install?): the items that teach them show a red question mark until you Install again.`);
-  if (st.mounts && !st.mount_problem) notes.push(`${plural(st.mounts, "mount")}: ` + (direct ?
-    "retail's own models, in the same patch." : `converted for any 3.3.5a client, in a patch of their own (patch-M).`) +
-    " Each is a spell, its creature with retail's sounds and the item that teaches it (retail's icon) - in the SQL to apply.");
-  if (st.foreign) notes.push(`<span class="warn">!</span> Your backport project has ${plural(st.foreign, "look")} made outside the ` +
-    `workbench that aren't in your basket - <a href="#" data-go="basket">bring them in or let them go</a> first.`);
+  if (st.mounts && !st.mount_problem) notes.push(`${plural(st.mounts, "mount")}: retail's own models, in the same patch. ` +
+    "Each is a spell, its creature with retail's sounds and the item that teaches it (retail's icon) - in the SQL to apply.");
   if (st.stats && st.stats.without) notes.push(`<span class="warn">!</span> ${st.stats.without} of ${plural(st.stats.pieces, "piece")} ` +
     `have no stats yet - they'll be level-1 cosmetic copies. <a href="#" data-go="stats">Give them stats</a>`);
-  if (!direct && st.equip_plus && !st.equip_plus.wanted) notes.push(`Equip Plus isn't in your client: Install leaves out the extra 3D pieces ` +
-    `(skirts, boot shells, buckles, 3D capes); everything else works on any 3.3.5a client.`);
-  renderAudit(st.audit || {warnings: [], fails: []}, running);
   $("#stats-state").textContent = st.stats && st.stats.without ? st.stats.without : "";
   $("#stats-state").hidden = !(st.stats && st.stats.without);
   $("#k-data").innerHTML = notes.join("<br>");
   $$("#k-data a[data-go]").forEach(a => a.addEventListener("click", ev => { ev.preventDefault(); show(a.dataset.go); }));
 
-  $("#k-go").disabled = running || !n || st.problems.length > 0 || !!st.foreign;
+  $("#k-go").disabled = running || !n || st.problems.length > 0;
   $("#k-go").textContent = running && j.name === "go" ? "Installing…" : st.installed ? "Install again" : "Install";
   $("#k-stop").hidden = !running;
   $("#k-undo").disabled = running || !last;
-  // retail direct: the installed models read by the client itself (its model check mode)
-  $("#k-check").hidden = !direct || !last;
+  // the installed models read by the client itself (its model check mode)
+  $("#k-check").hidden = !last;
   $("#k-check").disabled = running;
   $("#k-check").textContent = running && j.name === "check" ? "Checking…" : "Check in the client";
-  $("#k-build").disabled = running || !st.project || !n;
+  $("#k-build").disabled = running || !n || st.problems.length > 0;
 
   // progress: the job's steps, each ticked as this job passes it (a new install starts them all clear)
   const done = s => (j && j.done || []).includes(s);
-  if (j && (j.name === "go" || j.name === "build" || j.name.startsWith("rerun"))) {
+  if (j && (j.name === "go" || j.name === "build")) {
     const go = j.name === "go";
-    const rows = [...(go && (!st.project || j.step === "create") ? [["create", "Create the kit's project"]] : []),
-                  ...st.steps.map(x => [x.step, x.words]),
-                  ...(go && st.mounts && st.route !== "direct" ? [["mounts", `Make the ${plural(st.mounts, "mount")}`]] : []),
-                  ...(go ? [["install", "Put the patch in your client" + (c.server_dbc ? " and the items on your server" : "")]] : [])];
+    const rows = [...st.steps.map(x => [x.step, x.words]), ...(go ? [["install", "Put the patch in your client"]] : [])];
     const cur = rows.findIndex(([s]) => s === j.step);
     $("#k-progress").replaceChildren(el("div", {class: "steps"}, rows.map(([s, words], i) => {
       const ok = done(s);
       const mark = running && i === cur ? ["run", "…"] : !running && j.state !== "ok" && i === cur ? ["bad", "✗"] : ok ? ["ok", "✓"] : ["", "•"];
-      const idle = s === "measure" && st.measure && !st.measure.needed && !st.measure.done;
-      return el("div", {class: "srow"}, el("span", {class: mark[0]}, mark[1]), el("span", {}, words,
-        idle ? el("span", {class: "muted"}, " - not needed for weapons") : null));
+      return el("div", {class: "srow"}, el("span", {class: mark[0]}, mark[1]), el("span", {}, words));
     })));
   } else $("#k-progress").replaceChildren();
 
@@ -974,8 +852,7 @@ function renderKit() {
   if (last) {
     result.push(el("div", {class: "kit-note"}, `Last install ${when(last.time)}: ` +
       [...last.client, ...last.added.map(a => a.split(/[\\/]/).pop())].join(", ") +
-      (last.server.length ? `; server ${last.server.join(", ")}` : "") + ". Restart the worldserver, then log in" +
-      (direct ? " with the x64 client." : ".")));
+      ". Restart the worldserver, then log in with the x64 client."));
     for (const p of st.sql) result.push(el("div", {class: "kit-note sql"}, "Yours to do: apply the item SQL to your world database - ",
       el("code", {}, `SOURCE ${slash(p)};`), " ", el("button", {class: "copy", onclick: () => copy(`SOURCE ${slash(p)};`)}, "copy")));
   }
@@ -986,29 +863,18 @@ function renderKit() {
   $("#kit-state").textContent = running ? "…" : "";
   $("#kit-state").hidden = !running;
 
-  // advanced: the kit's own steps, each redoable (retail direct's run together every time)
-  $("#k-steps-title").textContent = direct ? "Retail direct's steps" : "The kit's steps";
-  $("#k-steps-note").textContent = direct ? "Install runs these every time (they take a minute or so); Build only stops " +
-    "before the install, so you can look at the patch and the SQL first." : "Install runs these for you. Redo one when you " +
-    "changed something by hand; Build only stops before the install. The kit draws a preview picture of each piece into " +
-    "the project's sheets folder.";
+  // advanced: Install's steps (run together every time)
   $("#k-steps").replaceChildren(...st.steps.map(x => {
     const mark = running && j.step === x.step ? ["run", "…"] : x.ok === true ? ["ok", "✓"] : x.ok === false ? ["bad", "✗"] : ["", "•"];
     return el("div", {class: "srow", title: x.at ? `${x.ok ? "passed" : "failed"} ${x.at}` : "not run yet"},
       el("span", {class: mark[0]}, mark[1]),
-      el("span", {}, x.step, " ", el("span", {class: "sw"}, x.words)),
-      x.step === "select" || direct ? el("span") :
-        el("button", {class: "redo", disabled: running, onclick: () => kitRun("rerun", x.step)}, "redo from here"));
+      el("span", {}, x.step, " ", el("span", {class: "sw"}, x.words)));
   }));
-  $("#k-open-sheets").hidden = !st.sheets;
 }
-async function openSheets() {
-  try { await post("/api/kit/open-sheets", {}); } catch (e) { toast(e.message); }
-}
-async function kitRun(action, step = "") {
+async function kitRun(action) {
   try {
-    const r = await fetch("/api/kit/run", {method: "POST", headers: {"Content-Type": "application/json"},
-                                           body: JSON.stringify({action, step})});
+    const r = await fetch("/api/install/run", {method: "POST", headers: {"Content-Type": "application/json"},
+                                               body: JSON.stringify({action})});
     const body = await r.json();
     if (!r.ok) return toast(body.error || "failed");
     K.status = body; K.was = kitRunning(); K.openedLog = false; renderKit(); K.follow = true; scheduleKit();
@@ -1021,20 +887,10 @@ function wireKit() {
   $("#k-go").addEventListener("click", () => {
     const c = K.status.settings;
     const pl = K.status.plan || {};
-    if (K.status.route === "direct") {
-      if (confirm(`Install retail's own items into the x64 client - ${pl.adds ? `adding ${plural(pl.adds, "entry")} from the basket` :
-                  "the basket"}${pl.take_out ? `, taking out ${pl.take_out}` : ""}${pl.in_game ? ", keeping the rest of your game" : ""}:\n` +
-                  `${c.client_data}\n\nIt writes ${K.status.patch_name} (backing up the one it replaces - Undo puts it back) and ` +
-                  "the item SQL for your server, which you apply. It runs no SQL and leaves the server's dbc folder alone. Close WoW first."))
-        kitRun("go");
-      return;
-    }
-    if (confirm(`Install into your client - ${pl.adds ? `adding ${plural(pl.adds, "entry")} from the basket` : "the basket"}` +
-                `${pl.take_out ? `, taking out ${pl.take_out}` : ""}${pl.in_game ? ", keeping the rest of your game" : ""}:\n${c.client_data}\n` +
-                (c.server_dbc ? `\nand add its items to the server's dbc files:\n${c.server_dbc}\n` :
-                                "\nThe server's dbc folder isn't set, so the server is left alone.\n") +
-                "\nIt builds what changed first (that can take a while), backs up everything it replaces " +
-                "(Undo puts it back) and runs no SQL. Close WoW first."))
+    if (confirm(`Install retail's own items into the x64 client - ${pl.adds ? `adding ${plural(pl.adds, "entry")} from the basket` :
+                "the basket"}${pl.take_out ? `, taking out ${pl.take_out}` : ""}${pl.in_game ? ", keeping the rest of your game" : ""}:\n` +
+                `${c.client_data}\n\nIt writes ${K.status.patch_name} (backing up the one it replaces - Undo puts it back) and ` +
+                "the item SQL for your server, which you apply. It runs no SQL and leaves the server's dbc folder alone. Close WoW first."))
       kitRun("go");
   });
   $("#k-check").addEventListener("click", () => {
@@ -1103,7 +959,7 @@ function collectionShows(slot, row, id) {
 }
 // A model of its own (a helm, shoulders, a buckle) shows its slot's groups at 1 + its AttachmentGeosetGroup
 // value, or at 1 + the display's GeosetGroupOverride when that is higher (the Heroic and Mythic tier looks
-// whose bigger x02 parts show - as the kit builds them); everything else in it draws.
+// whose bigger x02 parts show, as the x64 client draws them); everything else in it draws.
 function attachedShows(slot, row, id) {
   const groups = (S.meta.item_geosets || {})[slot] || [], i = groups.indexOf(Math.floor(id / 100));
   if (id < 100 || i < 0 || !row) return true;

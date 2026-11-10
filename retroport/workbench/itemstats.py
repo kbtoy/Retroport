@@ -1,6 +1,6 @@
-"""The Stats step: what each backported piece is in game.
+"""The Stats step: what each installed piece is in game.
 
-The kit makes every look a cosmetic copy - any class, level 1, no stats. Here each piece gets
+Install makes every look a cosmetic copy - any class, level 1, no stats. Here each piece gets
 its item level and required level, quality, who may wear it, its armour type, stats, armour,
 weapon damage and speed, sockets and socket bonus, durability, price, binding, a description,
 and item sets with their set bonuses. The page works the numbers out (WotLK's own rules, see
@@ -10,15 +10,11 @@ and item sets with their set bonuses. The page works the numbers out (WotLK's ow
      "pieces": {"<retail display>": {...}},    a piece's own values (and its worked-out stats)
      "sets":   [{"key", "name", "pieces": [display...], "bonuses": [[pieces needed, spell]]}]}
 
-A piece is the kit's item for one look (the kit makes one item per retail display id; its
-``ids.json`` says which entry). At Install the kit's own output is left as it made it, and:
-
-* ``out/sql/retroport-items.sql`` - the kit's item SQL, then one UPDATE per piece with its stats
-  (the one file to apply);
-* the kit's ``out/dbc/Item.dbc`` - a piece whose armour type changed gets that subclass (and its
-  material) before the kit packs, so the client's and the server's tables agree with the SQL;
-* item sets - ``ItemSet.dbc`` rows (ids from 3000, kept per set) added to the client's own table
-  inside the kit's patch and to the server's, with ``item_template.itemset`` on their pieces.
+A piece is Install's item for one look (one item per retail display; ``direct`` says which
+entry). Install's item SQL is its item rows, then one UPDATE per piece with its stats
+(``updates``). Item sets - ``ItemSet.dbc`` rows (ids from 3000, kept per set: ``set_ids``,
+``set_rows``, ``itemset_dbc``), with ``item_template.itemset`` on their pieces - are laid out on the
+page; Install doesn't put them in the client's and the server's tables yet.
 
 Set bonuses are spells the 3.3.5 client already has: the bonuses of its own item sets, with
 their text, to choose from.
@@ -97,19 +93,19 @@ def effective(edits: dict, display, field: str, default=None):
 
 
 def touched(edits: dict, display) -> bool:
-    """Whether a piece has anything to write (otherwise it stays the kit's cosmetic copy)."""
+    """Whether a piece has anything to write (otherwise it stays a cosmetic copy)."""
     p = (edits.get("pieces") or {}).get(str(display), {})
     fields = ("ilvl", "req", "quality", "classes", "armor_type", "bonding")
     return bool(p.get("stats") or p.get("armor") or p.get("dmg_max") or any(effective(edits, display, f) not in (None, "")
                                                                             for f in fields))
 
 
-# -- the kit's output -------------------------------------------------------------------------
+# -- the item rows ------------------------------------------------------------------------------
 _TOKEN = re.compile(r"'((?:[^'\\]|''|\\.)*)'|(-?\d+(?:\.\d+)?)")
 
 
 def kit_items(sql_text: str) -> dict[int, dict]:
-    """The kit's item_template rows (entry -> {column: value}) from its INSERT."""
+    """An item SQL's item_template rows (entry -> {column: value}) from its INSERT."""
     m = re.search(r"INSERT INTO `item_template` \(([^)]*)\) VALUES\s*(.*?);\s*$", sql_text, re.S | re.M)
     if not m:
         return {}
@@ -142,7 +138,7 @@ def piece_sets(edits: dict, set_ids: dict) -> dict[str, int]:
 
 # AzerothCore's item_template columns, as its worldserver reads them (BuyPrice as int32). MySQL
 # refuses an UPDATE with a value outside its column - the whole piece's UPDATE - and the piece stays
-# the kit's level-1 copy; so every value is kept inside. (AzerothCore has no StatsCount column: it
+# a level-1 copy; so every value is kept inside. (AzerothCore has no StatsCount column: it
 # counts the stats it loads.)
 INT32, UINT32 = (-2 ** 31, 2 ** 31 - 1), (0, 2 ** 32 - 1)
 LIMITS = {"Quality": (0, 7), "ItemLevel": (0, 65535), "RequiredLevel": (0, 255), "bonding": (0, 255),
@@ -160,15 +156,15 @@ def column_value(col: str, v):
     return min(max(v, lo), hi) if lo is not None and isinstance(v, int) and not isinstance(v, bool) else v
 
 
-def updates(edits: dict, ids: dict, kit: dict[int, dict], set_ids: dict, names: dict | None = None) -> list[str]:
-    """One UPDATE per touched piece (the kit's row stays as it wrote it otherwise). ``names``: the name
-    each look has in the workbench (the item the basket chose): the kit names a look after the first
-    retail item of it, which may be another one that shares it - a piece named otherwise gets the
-    workbench's name (a name typed on the Stats page wins over both)."""
+def updates(edits: dict, ids: dict, rows: dict[int, dict], set_ids: dict, names: dict | None = None) -> list[str]:
+    """One UPDATE per touched piece (``rows``: the item rows as the SQL inserts them, entry -> {column:
+    value}; a row stays as it is otherwise). ``names``: the name each look has in the workbench (the
+    item the basket chose) - a row named after another retail item that shares the look gets it (a
+    name typed on the Stats page wins over both)."""
     out = []
     sets = piece_sets(edits, set_ids)
     for display, entry in sorted(((str(d), e) for d, e in (ids.get("item") or {}).items()), key=lambda t: t[1]):
-        row = kit.get(int(entry))
+        row = rows.get(int(entry))
         if row is None:
             continue
         in_set = sets.get(display)
@@ -224,54 +220,6 @@ def updates(edits: dict, ids: dict, kit: dict[int, dict], set_ids: dict, names: 
         out.append("UPDATE `item_template` SET " + ", ".join(f"`{k}` = {column_value(k, v)}" for k, v in set_.items()) +
                    f" WHERE `entry` = {int(entry)};")
     return out
-
-
-def write_sql(work: str, edits: dict, set_ids: dict, names: dict | None = None) -> str | None:
-    """``<work>/out/sql/retroport-items.sql``: the kit's item SQL, then the Stats step's UPDATEs (and
-    the workbench's name for each look the kit named after another item - see ``updates``)."""
-    kit_path = os.path.join(work, "out", "sql", "item_template.sql")
-    ids = _json(os.path.join(work, "ids.json"), {})
-    if not os.path.isfile(kit_path):
-        return None
-    text = open(kit_path, encoding="utf-8").read()
-    lines = updates(edits, ids, kit_items(text), set_ids, names)
-    path = os.path.join(work, "out", "sql", "retroport-items.sql")
-    with open(path + ".part", "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(text.rstrip() + "\n\n-- Retroport Workbench, the Stats step: levels, stats, armor, damage, sockets, "
-                 f"sets ({len(lines)} items)\n" + "\n".join(lines) + "\n")
-    os.replace(path + ".part", path)
-    return path
-
-
-def apply_item_dbc(work: str, edits: dict) -> bool:
-    """The kit's ``out/dbc/Item.dbc`` with each piece's armour type (subclass and material) - the
-    kit's own values for the others. True when the file changed (the kit must pack again)."""
-    from ..dbc import DBCFile
-    path = os.path.join(work, "out", "dbc", "Item.dbc")
-    kit_sql = os.path.join(work, "out", "sql", "item_template.sql")
-    if not (os.path.isfile(path) and os.path.isfile(kit_sql)):
-        return False
-    ids = _json(os.path.join(work, "ids.json"), {})
-    kit = kit_items(open(kit_sql, encoding="utf-8").read())
-    dbc = DBCFile.from_bytes(open(path, "rb").read())
-    by_id = {r[0]: r for r in dbc.records}
-    changed = False
-    for display, entry in (ids.get("item") or {}).items():
-        row, orig = by_id.get(int(entry)), kit.get(int(entry))
-        if row is None or orig is None:
-            continue
-        sub, mat = orig.get("subclass", row[2]), orig.get("Material", row[4])
-        at = effective(edits, display, "armor_type")
-        if at and orig.get("class") == 4 and sub in ARMOUR_TYPES and orig.get("InventoryType") != 16 and int(at) in ARMOUR_TYPES:
-            sub, mat = int(at), MATERIAL[int(at)]
-        if (row[2], row[4]) != (sub, mat):
-            row[2], row[4] = sub, mat
-            changed = True
-    if changed:
-        with open(path + ".part", "wb") as fh:
-            fh.write(dbc.to_bytes())
-        os.replace(path + ".part", path)
-    return changed
 
 
 # -- item sets ----------------------------------------------------------------------------------

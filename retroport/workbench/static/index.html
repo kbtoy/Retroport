@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Retroport Workbench</title>
+<title>Retroport Workbench x64</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="icon" href="/static/icon.png">
 </head>
 <body>
 <header class="top">
-  <div class="brand">Retroport <span>Workbench</span> <small class="muted" id="app-version"></small></div>
+  <div class="brand">Retroport <span>Workbench</span> x64 <small class="muted" id="app-version"></small></div>
   <div class="sources" id="sources" role="tablist" aria-label="Data source"></div>
   <div class="pill" id="state" title="Loading status">starting…</div>
 </header>
@@ -20,7 +20,7 @@
   <button class="nav" data-view="mounts">Mounts</button>
   <button class="nav" data-view="basket">Basket <span class="count" id="basket-count">0</span></button>
   <button class="nav" data-view="stats">Stats <span class="count warn" id="stats-state" hidden></span></button>
-  <button class="nav" data-view="backport">Backport <span class="count" id="kit-state"></span></button>
+  <button class="nav" data-view="backport">Install <span class="count" id="kit-state"></span></button>
   <button class="nav" data-view="settings">Settings <span class="count warn" id="settings-state" hidden>!</span></button>
   <div class="log" id="log" aria-live="polite"></div>
 </nav>
@@ -90,7 +90,6 @@
       </div>
     </div>
     <div class="panel basket-history" id="basket-history" hidden></div>
-    <div id="basket-foreign"></div>
     <div id="basket-list"></div>
     <div id="basket-game"></div>
   </section>
@@ -99,7 +98,7 @@
     <div class="page-head">
       <div>
         <h2>Item stats</h2>
-        <p class="muted">The backport kit makes every piece a level-1 cosmetic copy with no stats. Give them real
+        <p class="muted">Install makes every piece a level-1 cosmetic copy with no stats. Give them real
           ones here: set what all pieces share, fill in the stats, then adjust any piece - the tooltip shows it as
           it will look in game. Numbers follow WotLK's own items.</p>
       </div>
@@ -116,7 +115,8 @@
         <div class="head-actions"><button class="btn ghost" id="sets-from-basket">Make sets from the basket's sets</button>
           <button class="btn ghost" id="sets-new">New set</button></div></div>
       <p class="muted small">A set's pieces show it in their tooltip, and wearing enough of them gives its bonuses - spells
-        your 3.3.5 client already has (every bonus of its own item sets), or any spell by its id.</p>
+        your 3.3.5 client already has (every bonus of its own item sets), or any spell by its id. Install doesn't
+        put item sets in the game yet: they need rows in the client's and the server's item set tables.</p>
       <div id="stats-sets"></div>
     </div>
   </section>
@@ -125,19 +125,18 @@
     <div class="page-head">
       <div>
         <h2>Settings</h2>
-        <p class="muted">Where your game and server are, and where the items come from. The workbench keeps its
+        <p class="muted">Where your game is, and where the items come from. The workbench keeps its
           cache and basket in <code id="st-data"></code>.</p>
       </div>
     </div>
     <div class="panel welcome" id="st-welcome" hidden>
       <h3>Welcome</h3>
-      <p>Point the workbench at your <b>3.3.5a client</b> to begin - everything else has a default. Retail's items
-        and the bodies the character view dresses come from <b>wago.tools</b>, so there's nothing else to install.</p>
+      <p>Point the workbench at <b>the x64 client</b> (the folder with WowClient64.exe) and at <b>your own retail
+        install</b>: Install reads retail's items, models and textures from there and puts them into the client as they
+        are - nothing is converted. Browsing works from <b>wago.tools</b> until then.</p>
     </div>
-    <div class="panel"><h3>Your game and server</h3><div class="form" id="st-game"></div></div>
-    <div class="panel"><h3>How Install puts items in</h3><div class="form" id="st-route"></div></div>
+    <div class="panel"><h3>Your game</h3><div class="form" id="st-game"></div></div>
     <div class="panel"><h3>Where the items come from</h3><div class="form" id="st-sources"></div></div>
-    <div class="panel"><h3>Backport kit</h3><div class="form" id="st-kit"></div></div>
     <div class="actions sticky-save"><button class="btn" id="st-save">Save</button>
       <span class="muted" id="st-note"></span></div>
   </section>
@@ -145,9 +144,10 @@
   <section class="view" id="view-backport" hidden>
     <div class="page-head">
       <div>
-        <h2>Backport</h2>
-        <p class="muted">Install turns the basket into a patch for your client and item rows for your server. It
-          builds only what changed, backs up everything it replaces, and Undo puts it back.</p>
+        <h2>Install</h2>
+        <p class="muted">Install puts the basket's items and mounts into the x64 client as retail has them - its own
+          models, textures and tables, nothing converted - and writes their SQL for your server. It backs up what it
+          replaces, and Undo puts it back.</p>
       </div>
     </div>
     <div class="panel install">
@@ -164,7 +164,6 @@
         </div>
       </div>
       <div class="kit-note" id="k-data"></div>
-      <div class="kit-audit" id="k-audit" hidden></div>
       <div class="progress" id="k-progress"></div>
       <div id="k-result"></div>
     </div>
@@ -173,12 +172,11 @@
       <pre id="k-log"></pre>
     </details>
     <details class="panel" id="k-advanced">
-      <summary><span id="k-steps-title">The kit's steps</span> <span class="muted">(advanced)</span></summary>
-      <p class="muted small" id="k-steps-note">Install runs these for you. Redo one when you changed something by hand; Build only
-        stops before the install. The kit draws a preview picture of each piece into the project's sheets folder.</p>
+      <summary><span id="k-steps-title">Install's steps</span> <span class="muted">(advanced)</span></summary>
+      <p class="muted small" id="k-steps-note">Install runs these every time (they take a minute or so); Build only stops
+        before the install, so you can look at the patch and the SQL first.</p>
       <div id="k-steps" class="steps"></div>
-      <div class="actions"><button class="btn ghost" id="k-build">Build only</button>
-        <button class="btn ghost" id="k-open-sheets" hidden onclick="openSheets()">Open the preview pictures folder</button></div>
+      <div class="actions"><button class="btn ghost" id="k-build">Build only</button></div>
     </details>
   </section>
 </main>

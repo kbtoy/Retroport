@@ -59,21 +59,14 @@ SOFTWARE.
   copy is kept in `wotlkconv/` with its license (`wotlkconv/LICENSE`) and the commit it was copied
   from (`wotlkconv/VENDORED.md`), so retroport never depends on that repository being online.
 
-## Run by retroport, never bundled
+## Earlier Workbenches
 
-The Workbench downloads these from their authors' own pages on the user's machine, at the commits
-it is tested with, and runs them as programs. Nothing of theirs is in this repository or in a
-release.
-
-- **[wow-retail-backport](https://github.com/Kirazul/wow-retail-backport)** by **Kirazul** - the
-  retail backport kit: the whole pipeline that turns retail items into a 3.3.5a patch, client and
-  server tables and item SQL. It carries no license, so all rights stay with its author; the
-  Workbench is a front end that runs it.
-- **[Equip Plus (wxl-equip-plus)](https://github.com/TheDaveCalaz/wxl-equip-plus)** by
-  **TheDaveCalaz** (GPL-3.0) - the WarcraftXL extension that draws 3D models on every armour slot,
-  and the tools the Workbench runs to prepare the kit's pieces for it and merge the server's DBCs.
-- **[WarcraftXL](https://github.com/WarcraftXL/wxl-core)** (GPL-3.0) - the 3.3.5a client extension
-  framework Equip Plus and retroport's `native/wxl-*` plugins are built on.
+Retroport Workbench x64 runs no other tool. Earlier Workbenches (the `main` branch) downloaded and
+ran **[wow-retail-backport](https://github.com/Kirazul/wow-retail-backport)** by **Kirazul** (no
+license: all rights stay with its author) and the tools of
+**[Equip Plus (wxl-equip-plus)](https://github.com/TheDaveCalaz/wxl-equip-plus)** by **TheDaveCalaz**
+(GPL-3.0), the extension of **[WarcraftXL](https://github.com/WarcraftXL/wxl-core)** (GPL-3.0) - the
+framework retroport's `native/wxl-*` plugins are built on too. Thank you to both.
 
 ## Bundled in the release
 
@@ -84,7 +77,6 @@ The release zip carries these, unchanged, each with its license file (in
 |---|---|---|
 | wotlkconv (Converter), as above | MIT | https://github.com/Bar3b0n3s/Converter |
 | Python 3.14 (embeddable package) | PSF-2.0 | https://www.python.org |
-| NumPy | BSD-3-Clause and others | https://numpy.org |
 | Pillow | MIT-CMU | https://python-pillow.github.io |
 | pydantic, pydantic-core, typing-inspection | MIT | https://github.com/pydantic/pydantic |
 | Typer, annotated-doc | MIT | https://github.com/fastapi/typer |
@@ -99,7 +91,7 @@ The release zip carries these, unchanged, each with its license file (in
 ## Data and knowledge
 
 - **[wago.tools](https://wago.tools)** - retail and BfA game tables and files by FileDataID, at any
-  build: the Workbench's default data source (and the kit's).
+  build: the Workbench's default data source for browsing.
 - **[WoWDBDefs](https://github.com/wowdev/WoWDBDefs)** - the DB2 definitions local installs are read with.
 - **[wow-listfile](https://github.com/wowdev/wow-listfile)** - the community listfile that names game files.
 - **[wowdev.wiki](https://wowdev.wiki)** - the M2, BLP, DB2, CASC and client documentation much of
@@ -122,7 +114,7 @@ Not used by Retroport Workbench, but by the other tools in this repository
 ## The server
 
 - **[AzerothCore](https://github.com/azerothcore/azerothcore-wotlk)** - the server the Workbench's
-  item SQL and DBCs are written for; `native/mod-retroport-racials` is an AzerothCore module.
+  item SQL is written for; `native/mod-retroport-racials` is an AzerothCore module.
 
 ## Not affiliated with Blizzard
 

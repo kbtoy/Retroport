@@ -1,27 +1,20 @@
-"""The basket's mounts made for a client: their files, the client's tables and the server's SQL.
+"""The basket's mounts made for the client: their files, the client's tables and the server's SQL.
 
-Both install routes call ``build``; they differ in the files only:
-
-* ``"kit"`` (any 3.3.5a client): each model converted by wotlkconv (``convert.engine``; its skins,
-  animations and skeleton with it), its own textures and the display's skins converted to BLPs 3.3.5
-  reads; the result goes in ``Data\\patch-M.MPQ`` (``write_patch``), put in by the kit route's
-  install and taken out by its Undo (``place``);
-* ``"direct"`` (the x64 client): retail's own files, which the client converts as it loads them - a
-  model finds its skins, animations and skeleton by name beside it and its textures by FileDataID,
-  so ``paths`` holds the path-table rows; ``direct`` adds them all to its patch (``retailpack.patch_for``).
+``build`` takes retail's own files, which the client reads as they are - a model finds its skins,
+animations and skeleton by name beside it and its textures by FileDataID, so ``paths`` holds the
+path-table rows; ``direct`` adds them all to its patch (``retailpack.patch_for``).
 
 Every model and skin goes under ``creature\\retroport\\`` (``mounts.relocate``): a retail model
 that kept an old model's path (the riding horse) never replaces the stock one NPCs use. Sounds keep
 retail's paths - .ogg files, which 3.3.5 never had (``_sounds``). The tables are the client's own as
-the route's patch finds them (``ClientData`` with the patch and everything above it set aside), so a
+Install's patch finds them (``ClientData`` with the patch and everything above it set aside), so a
 patch above it that holds one of them would hide the mounts' rows: the build stops and says which.
-The item display table is the one the item kit's patch holds above: ``place_item_rows`` puts the
+An older tool's item patch may hold the item display table above it: ``place_item_rows`` puts the
 items' rows (their bag icons) in it at install.
 """
 
 from __future__ import annotations
 
-import json
 import ntpath
 import os
 import shutil
@@ -32,10 +25,7 @@ from . import itemids
 from . import mounts as MT
 from . import retailpack as RP
 
-KIT_PATCH = "patch-M.MPQ"
-KIT_SQL, DIRECT_SQL = "retroport-mounts.sql", "retail-direct-mounts.sql"
-MANIFEST = "retroport\\mounts.json"
-CONVERT_VERSION = 1                  # converted models are kept per retail build and this
+DIRECT_SQL = "retail-direct-mounts.sql"
 
 
 @dataclass
@@ -177,10 +167,10 @@ def _client(client_dir: str, patch: str):
     return cd, [label for label, s in up if any(_has(s, f"DBFilesClient\\{t}.dbc") for t in MT.TABLES)]
 
 
-def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str, route: str, patch: str,
+def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str, patch: str,
           data_dir: str, listfile: str, say=print, step=lambda s: None) -> Built:
-    """The mounts of ``entries`` (basket entries of kind "mount") for ``route`` ("kit" or "direct"),
-    their tables as ``patch`` will hold them."""
+    """The mounts of ``entries`` (basket entries of kind "mount"), their tables as ``patch`` will hold
+    them."""
     from ..dbc import DBCFile
     if not entries:
         raise ValueError("no mounts to build")
@@ -257,8 +247,6 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
         client_model = os.path.splitext(MT.relocate(names[model]))[0] + ".m2"
         tex_ids = {i: f for i, f in enumerate((dd.get("textures") or [])[:len(MT.SKIN_TYPES)]) if f}
         tex = {i: names.get(f, f"{os.path.dirname(names[model])}\\wxl_{f}.blp") for i, f in tex_ids.items()}
-        if 3 in tex_ids:
-            notes.append(f"{name}: its fourth skin is for the x64 client (a stock client draws without it)")
         tnames, _files = MT.texture_names(client_model, tex)
         packed, lost = MT.geoset_data(dd.get("geosets"))
         if lost:
@@ -285,19 +273,16 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                                         "icon": icon_fdid, "names": names},
                              item_icon=item_icon, item_template=stock_item,
                              state=[dict(s) for s in dd.get("state") or [] if s.get("model") in names],
-                             gradient=dd.get("gradient") if route != "kit" else None,
+                             gradient=dd.get("gradient"),
                              dissolve=(dict(dd["dissolve"], layers=[dict(layer) for layer in dd["dissolve"]["layers"]])
-                                       if dd.get("dissolve") and route != "kit" else None),
-                             bank=dd.get("bank") if route != "kit" else None))
+                                       if dd.get("dissolve") else None),
+                             bank=dd.get("bank")))
         if dd.get("dissolve"):
-            notes.append(f"{name}: retail lays a dissolve over it - for the x64 client"
-                         + (" (the converter route leaves it out)" if route == "kit" else ""))
+            notes.append(f"{name}: retail lays a dissolve over it")
         if dd.get("gradient"):
-            notes.append(f"{name}: retail shades it with a gradient - for the x64 client"
-                         + (" (the converter route leaves it out)" if route == "kit" else ""))
+            notes.append(f"{name}: retail shades it with a gradient")
         if dd.get("state"):
-            notes.append(f"{name}: retail attaches {len(dd['state'])} model(s) to it - for the x64 client"
-                         + (" (the converter route leaves them out)" if route == "kit" else ""))
+            notes.append(f"{name}: retail attaches {len(dd['state'])} model(s) to it")
         sound_of[got["id"]] = dd.get("sound") or 0
     if not rides:
         raise ValueError("none of the mounts could be made")
@@ -310,32 +295,24 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                 item_table_above=top[0] if top else "")
     for r in rides:
         step("mounts")
-        if route == "kit":
-            _kit_files(out, r, source, listfile, data_dir, say)
-        else:
-            _direct_files(out, r, source, listfile)
+        _direct_files(out, r, source, listfile)
     for path, fdid in sorted(ship_icons.items()):
-        if route == "kit":
-            data, _why = source.try_read(fdid)
-            if data:
-                out.files[path] = _blp(data, path)
-        else:
-            out.files[path] = fdid
-            out.paths[fdid] = ("texture", path)
+        out.files[path] = fdid
+        out.paths[fdid] = ("texture", path)
     for path, fdid in sorted(sound_files.items()):
         out.files[path] = fdid
         out.paths.setdefault(fdid, ("sound", path))
     skins = MT.skin_table(rides)
     if skins:
         out.files[MT.SKIN_TABLE] = skins
-    states = MT.state_table(rides) if route != "kit" else None
+    states = MT.state_table(rides)
     if states:
         out.files[MT.STATE_TABLE] = states
     heard = sum(1 for r in rides if r.sound_kits)
     say(f"   sounds: {heard} of {len(rides)} mount(s) with retail's ({len(sounds.kits)} sound kits, "
         f"{len(sound_files)} files, footsteps for {len({row[1] for row in sounds.footsteps})} new kind(s) of feet)")
     made = time.strftime("%Y-%m-%d %H:%M")
-    out.sql = MT.mount_sql(out.tables, rides, ids["owned"], catalog.build, made, route)
+    out.sql = MT.mount_sql(out.tables, rides, ids["owned"], catalog.build, made, "retail direct")
     out.owned = ids["owned"] = MT.owned_now(rides, ids["owned"])
     MT.save_ids(data_dir, ids)
     itemids.remember(itemids.path(data_dir), {"item": {f"mount:{r.mount}": r.item for r in rides}}, "mounts")
@@ -344,88 +321,7 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
     return out
 
 
-def _blp(raw: bytes, name: str) -> bytes:
-    from .eprows import client_blp
-    return client_blp(raw, name)
-
-
-# -- the kit route: converted ---------------------------------------------------------------------
-def converted(source, fdid: int, retail_name: str, listfile: str, cache: str, say=print) -> dict:
-    """A retail model converted by wotlkconv, kept in ``cache`` (per FileDataID): {"files":
-    {basename: path}, "stem", "txid": the model's texture FileDataIDs by slot}."""
-    from ..convert import engine
-    folder = os.path.join(cache, str(fdid))
-    done = os.path.join(folder, "converted.json")
-    try:
-        with open(done, encoding="utf-8") as fh:
-            got = json.load(fh)
-        if all(os.path.isfile(p) for p in got["files"].values()):
-            return got
-    except (OSError, ValueError, KeyError):
-        pass
-    raw, why = source.try_read(fdid)
-    if not raw:
-        raise ValueError(f"FileDataID {fdid} isn't readable from your retail install: {why}")
-    txid = []
-    for magic, payload in RP.chunks(raw):
-        if magic == b"TXID":
-            txid = RP._u32s(payload)
-    stem = os.path.splitext(retail_name.replace("/", "\\").rsplit("\\", 1)[-1])[0]
-    if os.path.isdir(folder):
-        shutil.rmtree(folder)
-    os.makedirs(folder)
-    say(f"   converting {retail_name} ...")
-    er = engine.convert_with_wotlkconv(os.path.join(folder, stem + ".m2"), folder, output_stem=stem,
-                                       listfile_path=listfile, casc=source.open(), data=raw)
-    for n in er.notes:
-        if n.level == "error":
-            say(f"     [{n.level}] {n.code}: {n.message}")
-    if not er.ok:
-        raise ValueError(f"{retail_name}: the conversion failed: {er.error}")
-    got = {"stem": stem, "txid": txid, "files": {os.path.basename(p): p for p in er.written}}
-    with open(done, "w", encoding="utf-8") as fh:
-        json.dump(got, fh, indent=1)
-    return got
-
-
-def _kit_files(out: Built, r: MT.Ride, source, listfile: str, data_dir: str, say) -> None:
-    from ..formats.md20 import bake_texture_paths, read_texture_slots
-    names = r.retail["names"]
-    model = r.retail["model"]
-    cache = os.path.join(data_dir, "mounts", "converted", f"{getattr(source, 'build', '')}-v{CONVERT_VERSION}")
-    got = converted(source, model, names[model], listfile, cache, say)
-    folder = r.model_path.rsplit("\\", 1)[0]
-    stem = got["stem"]
-    for base, path in got["files"].items():
-        with open(path, "rb") as fh:
-            data = fh.read()
-        if base.lower() == f"{stem}.m2".lower():
-            # its own textures: where the mount's files go, each converted for 3.3.5
-            slots = {}
-            for s in read_texture_slots(data):
-                if s.type == 0 and s.name:
-                    fdid = got["txid"][s.index] if s.index < len(got["txid"]) else 0
-                    there = MT.relocate(s.name)
-                    slots[s.index] = there
-                    if there not in out.files:
-                        raw, _why = source.try_read(fdid) if fdid else (None, "")
-                        if raw:
-                            out.files[there] = _blp(raw, there)
-                        else:
-                            out.notes.append(f"{r.name}: texture {s.name} isn't readable - drawn without it")
-            if slots:
-                data = bake_texture_paths(data, slots)
-        out.files[f"{folder}\\{base}".lower()] = data
-    for path, slot in MT.texture_names(r.model_path, r.retail["textures"])[1].items():
-        fdid = r.retail["texture_ids"][slot]
-        raw, why = source.try_read(fdid)
-        if raw:
-            out.files[path] = _blp(raw, path)
-        else:
-            out.notes.append(f"{r.name}: skin texture {fdid} isn't readable ({why})")
-
-
-# -- the direct route: retail's own files ---------------------------------------------------------
+# -- retail's own files ---------------------------------------------------------------------------
 def _direct_files(out: Built, r: MT.Ride, source, listfile: str) -> None:
     """The model and every file it names (recursively), at their relocated paths, as path-table rows;
     the display's skins in the model's folder under the names CreatureDisplayInfo gives them."""
@@ -485,39 +381,6 @@ def _direct_files(out: Built, r: MT.Ride, source, listfile: str) -> None:
                 out.notes.append(f"{r.name}: a texture its dissolve lays over it (FileDataID {fdid}) has no name - left out")
 
 
-# -- the kit route's patch ------------------------------------------------------------------------
-def write_patch(path: str, built: Built, source, record: dict) -> int:
-    """``built`` as a patch of its own at ``path`` (the kit route): what made it, the tables, the
-    files. How many files."""
-    w = RP.PatchWriter(path)
-    try:
-        w.add(MANIFEST, json.dumps(record, indent=1).encode())
-        for name, data in built.tables.items():
-            w.add(f"DBFilesClient\\{name}.dbc", data)
-        n = 0
-        for p, data in sorted(built.files.items()):
-            if isinstance(data, int):
-                data, _why = source.try_read(data)
-            if data:
-                w.add(p, data)
-                n += 1
-        w.close()
-    except BaseException:
-        w.abandon()
-        raise
-    return n
-
-
-def ours(path: str) -> bool:
-    """Whether the patch at ``path`` is one this module wrote (it holds the manifest)."""
-    from ..mpq import MPQ
-    m = MPQ(path)
-    try:
-        return m.has(MANIFEST)
-    finally:
-        m.close()
-
-
 _HOLDS: dict[tuple, set] = {}
 
 
@@ -564,26 +427,6 @@ def stale(client_data: str, patch: str) -> list[str]:
     return [name for name, held in lower if held & set(MT.TABLES) or (MT.ITEM_TABLE in held and not item_above)]
 
 
-def place(patch: str | None, client_data: str, backup: str, record: dict, say=print) -> None:
-    """The kit route's mount patch into ``client_data`` (``patch`` None: the one there taken out),
-    backed up into ``backup`` and noted in ``record`` (the kit's install record: its Undo puts it back)."""
-    dest = os.path.join(client_data, KIT_PATCH)
-    if os.path.exists(dest):
-        if not ours(dest):
-            raise ValueError(f"{dest} is another tool's patch - the mounts won't replace it")
-        os.makedirs(os.path.join(backup, "client"), exist_ok=True)
-        shutil.copy2(dest, os.path.join(backup, "client", KIT_PATCH))
-        record.setdefault("client", []).append(KIT_PATCH)
-        os.remove(dest)                          # never write through a hard link into another client
-        if patch is None:
-            say(f"   took out {KIT_PATCH} (no mounts in your game now)")
-    elif patch is not None:
-        record.setdefault("added", []).append(dest)
-    if patch is not None:
-        shutil.copy2(patch, dest)
-        say(f"   installed {KIT_PATCH}")
-
-
 def _fingerprint(path: str) -> list[int]:
     st = os.stat(path)
     return [st.st_size, st.st_mtime_ns]
@@ -592,7 +435,7 @@ def _fingerprint(path: str) -> list[int]:
 def place_item_rows(client_dir: str, patch: str, rides: list[MT.Ride], ours: set[int], backup: str, record: dict,
                     say=print) -> str:
     """The mount items' ItemDisplayInfo rows (their bag icons) into the archive the client reads that
-    table from, when it outranks ``patch`` (which carries them itself): the item kit's patch, say.
+    table from, when it outranks ``patch`` (which carries them itself): an older tool's item patch, say.
     The archive is backed up into ``backup`` and noted in ``record`` unless this install put it
     there (``record``'s client/added: its Undo takes it out anyway), then replaced by a copy with the
     rows - never written through a hard link. Which archive took them ("" none)."""

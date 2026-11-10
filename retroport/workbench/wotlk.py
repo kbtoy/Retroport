@@ -1,6 +1,6 @@
 """WotLK's own item numbers, for the Stats step - from Wrath Classic's tables on wago.tools.
 
-The kit makes every item a level-1 cosmetic copy. The Stats step gives them real stats, and the
+Install makes every item a level-1 cosmetic copy. The Stats step gives them real stats, and the
 numbers it suggests are WotLK's: Wrath Classic (3.4.5) carries every WotLK item as it was, and the
 tables its items were made with. From them, once (cached):
 

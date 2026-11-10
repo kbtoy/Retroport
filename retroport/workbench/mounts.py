@@ -1,5 +1,5 @@
 """Retail's mounts: the catalog the Mounts page browses, and the rows a 3.3.5 client and an
-AzerothCore server need to ride one - the same for both install routes (``mountpack`` runs them).
+AzerothCore server need to ride one (``mountpack`` runs them).
 
 A retail mount (Mount) is a spell (SourceSpellID) that shows one of its displays (MountXDisplay ->
 CreatureDisplayInfo: a model, CreatureModelData, and up to four skin textures) and flies when its
@@ -20,10 +20,10 @@ type (MountTypeXCapability -> MountCapability) can. In 3.3.5 a mount is:
 * an item that teaches it (spell 483 "Learning", then the mount spell), named as retail's own, its
   bag icon retail's (an ItemDisplayInfo row of its own: ``with_item_displays``).
 
-The client tables are whole files: the route's patch carries each with the client's rows (as the
+The client tables are whole files: Install's patch carries each with the client's rows (as the
 patch finds them) plus the mounts', so it must outrank every archive holding one of them
-(``TABLES``). The item display table is the exception - the item kit's patch holds it above the
-mounts' (``mountpack.place_item_rows`` adds the rows to whichever archive is on top). Ids come from
+(``TABLES``). The item display table is the exception - an older tool's item patch may hold it
+above the mounts' (``mountpack.place_item_rows`` adds the rows to whichever archive is on top). Ids come from
 one registry (``<data>/mount-ids.json``) so a mount keeps its spell, creature and item ids from
 install to install - players keep the mounts they learned.
 """
@@ -49,8 +49,8 @@ SOURCES = {0: "Drop", 1: "Quest", 2: "Vendor", 3: "Profession", 4: "Pet battle",
 KINDS = ("ground", "flying")
 FLIES = 0x2                                 # MountCapability.Flags: the capability flies
 
-# the client tables a mount adds rows to (a route's patch must be their highest holder), and the
-# item display table (the route's patch carries it, but another may hold it above - see the module doc)
+# the client tables a mount adds rows to (Install's patch must be their highest holder), and the
+# item display table (Install's patch carries it, but another may hold it above - see the module doc)
 TABLES = ("Spell", "SpellIcon", "SkillLineAbility", "CreatureDisplayInfo", "CreatureModelData", "SoundEntries",
           "CreatureSoundData", "FootstepTerrainLookup")
 ITEM_TABLE = "ItemDisplayInfo"
@@ -911,7 +911,7 @@ def mount_sql(tables: dict[str, bytes], rides: list[Ride], owned: dict[str, list
               route: str) -> str:
     """The server's rows for ``rides``, read back from the client tables just made (``tables``) so
     both say the same. Only rows the workbench wrote before (``owned``: per table, the [id, marker]
-    pairs - either route's, the server is the same) are deleted first: an id the database already
+    pairs) are deleted first: an id the database already
     uses for something else makes the INSERT stop with "Duplicate entry" - nothing of yours is
     replaced."""
     from ..dbc import DBCFile

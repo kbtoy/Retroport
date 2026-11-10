@@ -1,18 +1,12 @@
-"""Every item and display id the workbench's projects ever gave a look - so none is given twice.
+"""Every item and display id given out for a look or a mount - so none is given twice.
 
-The kit numbers a project's items from 900000 and its displays above the client's highest, skipping
-the ids its scanned client tables hold. A look a project's patch no longer holds - taken out, or
-installed by another project whose patch is gone - leaves no row there, and the kit would give its
-numbers to another look; but the server still has the old item row, and players still carry it.
-So the workbench keeps every project's ``ids.json`` here (``<data>/item-ids.json``):
+The earlier Workbench's backport projects numbered their items from 900000 and their displays above
+the client's highest, and kept every id they gave here (``<data>/item-ids.json``); the server still
+has those item rows, and players still carry them. Install's mount items take their entries from
+990000 and reserve them here too (``remember``), so no number one gave is given again:
 
-* ``reserved`` - every id any project gave: a project's next look never gets one of another's;
-* ``item`` / ``display`` - the ids each retail display was first given: a look that comes back
-  (put in the basket again, or into another project) gets them again when they are free, so the
-  items players carry show again.
-
-``kitlocal`` applies it to the kit's ``tables`` step (``--ids``); the workbench adds the project's
-ids after each install (``remember``).
+* ``reserved`` - every id given out;
+* ``item`` / ``display`` - the ids each look (or ``mount:<id>``) was first given.
 """
 
 from __future__ import annotations
@@ -61,27 +55,3 @@ def remember(file: str, ids: dict, project: str = "") -> bool:
         json.dump(reg, fh, indent=1, sort_keys=True)
     os.replace(file + ".part", file)
     return True
-
-
-def give_back(reg: dict, ids: dict, looks, base_items: set, base_displays: set) -> int:
-    """``ids`` (a project's ``ids.json``) given the registry's ids for ``looks`` it has none for, where
-    no other look of the project and no row of the client's tables has them. How many it got."""
-    got = 0
-    for kind, base in (("item", base_items), ("display", base_displays)):
-        mine = ids.setdefault(kind, {})
-        used = {int(v) for v in mine.values()}
-        for d in looks:
-            d = str(d)
-            v = reg[kind].get(d)
-            if d in mine or v is None or v in used or v in base:
-                continue
-            mine[d] = v
-            used.add(v)
-            got += 1
-    return got
-
-
-def reserved_for(reg: dict, ids: dict) -> dict:
-    """The ids a project may not give a new look: every project's but its own."""
-    return {k: set(reg["reserved"][k]) - {int(v) for v in ((ids or {}).get(k) or {}).values()}
-            for k in ("item", "display")}

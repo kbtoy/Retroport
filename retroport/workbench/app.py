@@ -1,16 +1,16 @@
 """The workbench as an application: no console, its page in a window of its own.
 
-``Retroport Workbench.exe`` starts this with ``pythonw`` (``pythonw -m retroport.workbench.app`` does
+``Retroport Workbench x64.exe`` (``edition.NAME``) starts this with ``pythonw`` (``pythonw -m retroport.workbench.app`` does
 the same):
 
 * what the server says goes to ``<data>/workbench.log`` - there is no console to show it;
 * the server starts; when one is running already: the same copy opens only a window, another copy
   (another folder, or this one with newer code since it started) asks to take its place - the old
-  one stops (never in a kit job) and its window closes;
+  one stops (never in an install job) and its window closes;
 * the page opens in an Edge (or Chrome) *app window* - no tabs, no address bar - with a browser
   profile of its own, so it never mixes with your own browsing;
 * the app ends with its last page: when the window closes (or every page says goodbye and none
-  comes back), the server stops - after any kit job that's running has finished. A page left open
+  comes back), the server stops - after any install job that's running has finished. A page left open
   in the background says it's still there every so often; one that stops saying so (a browser that
   crashed) ends the app a few minutes later.
 
@@ -29,6 +29,7 @@ import traceback
 import urllib.error
 import urllib.request
 
+from . import edition
 from . import server as SV
 
 QUIET = 8            # seconds after a page says goodbye before the app ends (a reload says hello again)
@@ -107,7 +108,7 @@ def ask(text: str) -> bool:
     """A yes/no question box."""
     try:
         import ctypes
-        return ctypes.windll.user32.MessageBoxW(None, text, "Retroport Workbench", 0x4 | 0x20) == 6
+        return ctypes.windll.user32.MessageBoxW(None, text, edition.NAME, 0x4 | 0x20) == 6
     except Exception:
         return False
 
@@ -130,7 +131,7 @@ def message(text: str) -> None:
     """A message box: the app has no console to say it in."""
     try:
         import ctypes
-        ctypes.windll.user32.MessageBoxW(None, text, "Retroport Workbench", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, text, edition.NAME, 0x10)
     except Exception:
         pass
 
@@ -148,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     port = SV.PORT
     url = f"http://127.0.0.1:{port}/"
     profile = os.path.join(data, "window")
-    print(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} Retroport Workbench starting ({sys.executable})", flush=True)
+    print(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {edition.NAME} starting ({sys.executable})", flush=True)
     mine = SV.app_info()
     print(f"version {mine['version']} from {mine['from']}", flush=True)
     try:
@@ -163,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 open_window(url, profile)
                 return 0
             who = (f"Retroport Workbench {other['version']} from {other['from']}" if other else
-                   "An older Retroport Workbench")
+                   "An older Retroport Workbench")             # this edition, or another on its port
             if not other:                                    # too old to be asked to stop
                 message(f"{who} is still running. Close its window, wait a few seconds, then start this one "
                         f"({mine['version']} from {mine['from']}) again.")

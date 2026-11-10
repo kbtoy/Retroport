@@ -1,5 +1,5 @@
-"""Mounts: retail's mounts as 3.3.5 rides - the catalog, the client's tables, the server's SQL, both
-install routes."""
+"""Mounts: retail's mounts as rides in the x64 client - the catalog, the client's tables, the server's
+SQL, retail's own files."""
 
 import json
 import os
@@ -13,11 +13,10 @@ from retroport.mpq import MPQ, write_archive
 from retroport.workbench import catalog as C
 from retroport.workbench import direct as DR
 from retroport.workbench import itemids
-from retroport.workbench import kit as K
+from retroport.workbench import jobs as J
 from retroport.workbench import mountpack as MP
 from retroport.workbench import mounts as MT
 from retroport.workbench import retailpack as RP
-from retroport.workbench import server as SV
 
 
 # -- the 3.3.5 rules ------------------------------------------------------------------------------
@@ -221,7 +220,7 @@ def test_the_sql_reads_back_the_client_rows_and_deletes_only_its_own():
     rides = [_ride()]
     tables = MT.client_tables(_tables(), rides, {})
     owned = {"item_template": [[MT.ITEM_BASE + 5, "Old mount"]]}
-    sql = MT.mount_sql(tables, rides, owned, "12.1.5", "now", "kit")
+    sql = MT.mount_sql(tables, rides, owned, "12.1.5", "now", "retail direct")
     assert f"DELETE FROM `spell_dbc` WHERE (`ID`, `Name_Lang_enUS`) IN (({MT.ID_BASE},'Albino Drake'));" in sql
     assert f"({MT.ITEM_BASE},'Reins of the Albino Drake'),({MT.ITEM_BASE + 5},'Old mount')" in sql
     spell_values = sql.split("INSERT INTO `spell_dbc` VALUES\n(", 1)[1].split(");", 1)[0]
@@ -360,10 +359,9 @@ def test_mounts_in_the_basket_are_entries_of_their_own():
     assert plan["mounts"] == 1 and plan["looks"] == 0
     assert plan["entries"][0]["state"] == "ready" and plan["entries"][0]["mount"]["display"] == 25836
     assert [e["id"] for e in MT.basket_mounts(basket)] == [268]
-    assert K.basket_args(basket) == []                                       # never the kit's
 
 
-# -- both routes ----------------------------------------------------------------------------------
+# -- the build -----------------------------------------------------------------------------------
 def _model(*chunks):
     out = b""
     for magic, ids in chunks:
@@ -424,7 +422,7 @@ def _setup(tmp_path):
 def test_direct_ships_retail_files_in_their_own_folder_with_path_rows(tmp_path):
     src, lf, cat, entries = _setup(tmp_path)
     client = _client(tmp_path)
-    built = MP.build(entries, cat, src, str(client), "direct", RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
+    built = MP.build(entries, cat, src, str(client), RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
     folder = "creature\\retroport\\drakemount\\"
     assert built.files[folder + "drakemount.m2"] == 234564 and built.files[folder + "drakemount00.skin"] == 234570
     assert built.files[folder + "drakeskinwhite1.blp"] == 234596                # the display's skin, by its name
@@ -442,14 +440,14 @@ def test_direct_ships_retail_files_in_their_own_folder_with_path_rows(tmp_path):
     reg = itemids.load(itemids.path(str(tmp_path / "data")))
     assert r.item in reg["reserved"]["item"] and r.item != MT.ITEM_BASE        # the client's Item.dbc has 990000
     assert "INSERT INTO `spell_dbc`" in built.sql
-    again = MP.build(entries, cat, src, str(client), "direct", RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
+    again = MP.build(entries, cat, src, str(client), RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
     assert again.rides[0].id == r.id and "DELETE FROM `creature_template`" in again.sql
 
 
 def test_a_fourth_skin_ships_with_the_x64_clients_table(tmp_path):
     src, lf, cat, entries = _setup(tmp_path)
     cat.displays[25836]["textures"] = [234596, 0, 0, 234565]       # retail's fourth: the model's type 5
-    built = MP.build(entries, cat, src, str(_client(tmp_path)), "direct", RP.PATCH, str(tmp_path / "data"), lf,
+    built = MP.build(entries, cat, src, str(_client(tmp_path)), RP.PATCH, str(tmp_path / "data"), lf,
                      lambda m: None)
     r = built.rides[0]
     folder = "creature\\retroport\\drakemount\\"
@@ -459,98 +457,13 @@ def test_a_fourth_skin_ships_with_the_x64_clients_table(tmp_path):
     cdi = DBCFile.from_bytes(built.tables["CreatureDisplayInfo"])
     row = cdi.find_by_id(r.id)
     assert [cdi.get_string(row[6 + i]) for i in range(3)] == ["drakeskinwhite1", "", ""]   # the DBC keeps three
-    assert any("fourth skin is for the x64 client" in n for n in built.notes)
 
 
 def test_a_patch_above_holding_the_tables_stops_the_build(tmp_path):
     src, lf, cat, entries = _setup(tmp_path)
     client = _client(tmp_path, {"patch-Z.MPQ": {"DBFilesClient\\Spell.dbc": b"theirs"}})
     with pytest.raises(ValueError, match="patch-Z.MPQ"):
-        MP.build(entries, cat, src, str(client), "kit", MP.KIT_PATCH, str(tmp_path / "data"), lf, lambda m: None)
-
-
-def test_the_kit_route_converts_and_points_textures_at_the_new_folder(tmp_path, monkeypatch):
-    from retroport.formats.md20 import read_texture_slots
-    src, lf, cat, entries = _setup(tmp_path)
-    client = _client(tmp_path)
-    md20 = _md20(["creature\\drakemount\\drakemount_saddle.blp"])
-    out = tmp_path / "conv"
-    out.mkdir()
-    (out / "drakemount.m2").write_bytes(md20)
-    (out / "drakemount00.skin").write_bytes(b"SKIN")
-    monkeypatch.setattr(MP, "converted", lambda *a, **k: {"stem": "drakemount", "txid": [234565],
-        "files": {"drakemount.m2": str(out / "drakemount.m2"), "drakemount00.skin": str(out / "drakemount00.skin")}})
-    monkeypatch.setattr(MP, "_blp", lambda raw, name: b"converted " + raw)
-    built = MP.build(entries, cat, src, str(client), "kit", MP.KIT_PATCH, str(tmp_path / "data"), lf, lambda m: None)
-    folder = "creature\\retroport\\drakemount\\"
-    slots = read_texture_slots(built.files[folder + "drakemount.m2"])
-    assert slots[0].name == folder + "drakemount_saddle.blp"
-    assert built.files[folder + "drakemount_saddle.blp"] == b"converted BLP2saddle"
-    assert built.files[folder + "drakeskinwhite1.blp"] == b"converted BLP2white"
-    patch = tmp_path / "patch-M.MPQ"
-    MP.write_patch(str(patch), built, src, {"by": "test"})
-    m = MPQ(str(patch))
-    try:
-        assert m.has(MP.MANIFEST) and m.has("DBFilesClient\\Spell.dbc") and m.has(folder + "drakemount00.skin")
-    finally:
-        m.close()
-
-
-def _md20(names: list[str]) -> bytes:
-    """A minimal MD20 whose texture table holds ``names`` (type 0)."""
-    from retroport.formats import structs as S
-    buf = bytearray(b"MD20" + struct.pack("<I", 264) + bytes(0x150))
-    at = len(buf)
-    buf += bytes(S.M2TEXTURE * len(names))
-    S.write_m2array(buf, S.HDR_TEXTURES, len(names), at)
-    for i, n in enumerate(names):
-        raw = n.encode() + b"\0"
-        S.write_m2array(buf, at + i * S.M2TEXTURE + S.TEXTURE_FILENAME, len(raw), len(buf))
-        buf += raw
-    return bytes(buf)
-
-
-def test_place_backs_up_and_refuses_another_tools_patch(tmp_path):
-    data, backup = tmp_path / "Data", tmp_path / "backup"
-    data.mkdir()
-    write_archive(str(tmp_path / "ours.MPQ"), {MP.MANIFEST: b"{}", "a": b"1"})
-    rec: dict = {"client": [], "added": []}
-    MP.place(str(tmp_path / "ours.MPQ"), str(data), str(backup), rec, lambda m: None)
-    assert rec["added"] == [str(data / MP.KIT_PATCH)]
-    rec = {"client": [], "added": []}
-    MP.place(None, str(data), str(backup), rec, lambda m: None)         # no mounts now: taken out, backed up
-    assert not (data / MP.KIT_PATCH).exists() and rec["client"] == [MP.KIT_PATCH]
-    assert (backup / "client" / MP.KIT_PATCH).is_file()
-    write_archive(str(data / MP.KIT_PATCH), {"theirs": b"x"})
-    with pytest.raises(ValueError, match="another tool"):
-        MP.place(str(tmp_path / "ours.MPQ"), str(data), str(backup), {}, lambda m: None)
-
-
-# -- the workbench --------------------------------------------------------------------------------
-def test_a_mounts_only_install_on_the_kit_route_is_recorded_for_undo(tmp_path, monkeypatch):
-    monkeypatch.setattr(K, "wow_running", lambda: False)
-    client = tmp_path / "client"
-    (client / "Data").mkdir(parents=True)
-    (client / "Cache").mkdir()
-    work = tmp_path / "work"
-    kit = K.Kit({"work": str(work), "client_data": str(client / "Data")}, None, "", "", str(tmp_path / "data"))
-    kit.job = K.Job("go")
-    write_archive(str(tmp_path / "patch-M.MPQ"), {MP.MANIFEST: b"{}"})
-    items = [{"kind": "mount", "source": "retail", "id": 268, "name": "Albino Drake"}]
-    wb = types.SimpleNamespace(_mount_patch=str(tmp_path / "patch-M.MPQ"), _job_items=items)
-    wb._mounts_installed = types.MethodType(SV.Workbench._mounts_installed, wb)
-    assert SV.Workbench._mounts_alone(wb, kit, items)
-    rec = kit.last_install()
-    assert rec["added"] == [str(client / "Data" / MP.KIT_PATCH)] and rec["mounts"] == ["mount:retail:268"]
-    assert rec["basket"] == items and not (client / "Cache").exists()
-    assert kit.undo() and not (client / "Data" / MP.KIT_PATCH).exists()
-
-
-def test_the_kit_never_selects_mounts():
-    wb = types.SimpleNamespace(install_list=lambda: [{"kind": "mount", "source": "retail", "id": 1},
-                                                     {"kind": "item", "source": "retail", "id": 5}])
-    plan = {"entries": [{"state": "ready", "looks": []}, {"state": "ready", "looks": []}]}
-    assert SV.Workbench.kit_basket(wb, plan) == [{"kind": "item", "source": "retail", "id": 5}]
+        MP.build(entries, cat, src, str(client), RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
 
 
 def test_retail_direct_builds_mounts_alone_into_its_patch(tmp_path, monkeypatch):
@@ -560,7 +473,7 @@ def test_retail_direct_builds_mounts_alone_into_its_patch(tmp_path, monkeypatch)
     src.parse = lambda name, data: []
     d = DR.Direct(str(tmp_path / "data"), lf)
     d.client, d.source, d.mount_catalog = str(client), src, (lambda: cat)
-    monkeypatch.setattr(K, "wow_running", lambda: False)
+    monkeypatch.setattr(J, "wow_running", lambda: False)
     assert d.go(entries, C.plan_basket({}, entries), install=False)
     m = MPQ(os.path.join(d.work, "out", RP.PATCH))
     try:
@@ -577,29 +490,29 @@ def test_retail_direct_builds_mounts_alone_into_its_patch(tmp_path, monkeypatch)
 def test_a_lower_patch_changed_after_the_mounts_is_said(tmp_path):
     data = tmp_path / "Data"
     data.mkdir()
-    write_archive(str(data / MP.KIT_PATCH), {MP.MANIFEST: b"{}"})
+    write_archive(str(data / RP.PATCH), {RP.MANIFEST: b"{}"})
     write_archive(str(data / "patch-H.MPQ"), {"DBFilesClient/Spell.dbc".replace("/", chr(92)): b"race rows"})
     write_archive(str(data / "patch-D.MPQ"), {"other": b"x"})
     write_archive(str(data / "patch-Y.MPQ"), {"DBFilesClient/Spell.dbc".replace("/", chr(92)): b"above"})
-    made = os.path.getmtime(data / MP.KIT_PATCH)
+    made = os.path.getmtime(data / RP.PATCH)
     for name in ("patch-H.MPQ", "patch-D.MPQ", "patch-Y.MPQ"):
         os.utime(data / name, (made + 60, made + 60))
-    assert MP.stale(str(data), MP.KIT_PATCH) == ["patch-H.MPQ"]        # below it, holds a table, newer
+    assert MP.stale(str(data), RP.PATCH) == ["patch-H.MPQ"]        # below it, holds a table, newer
     os.utime(data / "patch-H.MPQ", (made - 60, made - 60))
-    assert MP.stale(str(data), MP.KIT_PATCH) == []
+    assert MP.stale(str(data), RP.PATCH) == []
     assert MP.stale(str(data), "patch-T.MPQ") == []                    # no such patch
 
 
 def test_the_item_table_is_stale_only_while_nothing_above_holds_it(tmp_path):
     data = tmp_path / "Data"
     data.mkdir()
-    write_archive(str(data / MP.KIT_PATCH), {MP.MANIFEST: b"{}"})
-    write_archive(str(data / "patch-I.MPQ"), {f"DBFilesClient\\{MT.ITEM_TABLE}.dbc": b"old kit"})
-    made = os.path.getmtime(data / MP.KIT_PATCH)
+    write_archive(str(data / RP.PATCH), {RP.MANIFEST: b"{}"})
+    write_archive(str(data / "patch-I.MPQ"), {f"DBFilesClient\\{MT.ITEM_TABLE}.dbc": b"old rows"})
+    made = os.path.getmtime(data / RP.PATCH)
     os.utime(data / "patch-I.MPQ", (made + 60, made + 60))
-    assert MP.stale(str(data), MP.KIT_PATCH) == ["patch-I.MPQ"]
-    write_archive(str(data / "patch-Y.MPQ"), {f"DBFilesClient\\{MT.ITEM_TABLE}.dbc": b"the kit's"})
-    assert MP.stale(str(data), MP.KIT_PATCH) == []                     # the client reads patch-Y's anyway
+    assert MP.stale(str(data), RP.PATCH) == ["patch-I.MPQ"]
+    write_archive(str(data / "patch-Y.MPQ"), {f"DBFilesClient\\{MT.ITEM_TABLE}.dbc": b"theirs, above"})
+    assert MP.stale(str(data), RP.PATCH) == []                     # the client reads patch-Y's anyway
 
 
 # -- sounds and icons -----------------------------------------------------------------------------
@@ -614,7 +527,7 @@ def test_a_mount_brings_retails_sounds_and_the_feet_3_3_5_lacks(tmp_path):
     src, lf, cat, entries = _both(tmp_path)
     client = _client(tmp_path)
     data = str(tmp_path / "data")
-    built = MP.build(entries, cat, src, str(client), "direct", RP.PATCH, data, lf, lambda m: None)
+    built = MP.build(entries, cat, src, str(client), RP.PATCH, data, lf, lambda m: None)
     drake, horse = built.rides
     ids = MT.load_ids(data)["sounds"]
     flap, jump, dirt, aggro = (ids[str(k)] for k in (230502, 10905, 7001, 95692))
@@ -637,7 +550,7 @@ def test_a_mount_brings_retails_sounds_and_the_feet_3_3_5_lacks(tmp_path):
     assert DBCFile.from_bytes(built.tables["CreatureModelData"]).find_by_id(horse.id)[MT.CMD_SOUND] == horse.id
     ftl = DBCFile.from_bytes(built.tables["FootstepTerrainLookup"])
     assert sorted(r[1:] for r in ftl.records) == [[10, 1, 500, 0], [587, 1, dirt, 0]]
-    again = MP.build(entries, cat, src, str(client), "direct", RP.PATCH, data, lf, lambda m: None)
+    again = MP.build(entries, cat, src, str(client), RP.PATCH, data, lf, lambda m: None)
     for name in ("SoundEntries", "CreatureSoundData", "FootstepTerrainLookup", MT.ITEM_TABLE):
         assert DBCFile.from_bytes(again.tables[name]).records == DBCFile.from_bytes(built.tables[name]).records
 
@@ -649,7 +562,7 @@ def test_retail_direct_ships_the_sounds_outside_the_path_tables(tmp_path, monkey
     src.parse = lambda name, data: []
     d = DR.Direct(str(tmp_path / "data"), lf)
     d.client, d.source, d.mount_catalog = str(client), src, (lambda: cat)
-    monkeypatch.setattr(K, "wow_running", lambda: False)
+    monkeypatch.setattr(J, "wow_running", lambda: False)
     assert d.go(entries, C.plan_basket({}, entries), install=False)
     m = MPQ(os.path.join(d.work, "out", RP.PATCH))
     try:
@@ -660,8 +573,8 @@ def test_retail_direct_ships_the_sounds_outside_the_path_tables(tmp_path, monkey
         m.close()
 
 
-def _kit_patch(data, held: bytes) -> str:
-    """The item kit's patch in ``data``, holding the client's item display table above the mounts'."""
+def _item_patch(data, held: bytes) -> str:
+    """An older tool's item patch in ``data``, holding the client's item display table above the mounts'."""
     path = str(data / "patch-Y.MPQ")
     write_archive(path, {f"DBFilesClient\\{MT.ITEM_TABLE}.dbc": held, "Item\\x.blp": b"theirs"})
     return path
@@ -670,16 +583,16 @@ def _kit_patch(data, held: bytes) -> str:
 def test_the_items_icons_go_in_the_item_table_above_the_mounts_patch(tmp_path):
     client = _client(tmp_path)
     data = client / "Data"
-    write_archive(str(data / MP.KIT_PATCH), {MP.MANIFEST: b"{}", f"DBFilesClient\\{MT.ITEM_TABLE}.dbc": _item_displays()})
-    kit = _kit_patch(data, _item_displays((227000, "INV_Kit_Item"), (MT.ID_BASE + 9, "Old_Mount")))
+    write_archive(str(data / RP.PATCH), {RP.MANIFEST: b"{}", f"DBFilesClient\\{MT.ITEM_TABLE}.dbc": _item_displays()})
+    older = _item_patch(data, _item_displays((227000, "INV_Kit_Item"), (MT.ID_BASE + 9, "Old_Mount")))
     other = tmp_path / "other client"
     other.mkdir()
-    os.link(kit, other / "patch-Y.MPQ")                                     # the x64 clients' Data: hard links
+    os.link(older, other / "patch-Y.MPQ")                                     # the x64 clients' Data: hard links
     rides = [_ride(item_display=MT.ID_BASE + 3, item_icon="inv_mount_new", item_template=[0] * 12 + [16] + [0] * 12)]
     record, backup = {"client": [], "added": []}, tmp_path / "backup"
-    assert MP.place_item_rows(str(client), MP.KIT_PATCH, rides, {MT.ID_BASE + 9}, str(backup), record,
+    assert MP.place_item_rows(str(client), RP.PATCH, rides, {MT.ID_BASE + 9}, str(backup), record,
                               lambda m: None) == "patch-Y.MPQ"
-    m = MPQ(kit)
+    m = MPQ(older)
     try:
         idi = DBCFile.from_bytes(m.read(f"DBFilesClient\\{MT.ITEM_TABLE}.dbc"))
         assert m.read("Item\\x.blp") == b"theirs"
@@ -695,39 +608,39 @@ def test_the_items_icons_go_in_the_item_table_above_the_mounts_patch(tmp_path):
         assert not DBCFile.from_bytes(held.read(f"DBFilesClient\\{MT.ITEM_TABLE}.dbc")).find_by_id(MT.ID_BASE + 3)
     finally:
         held.close()
-    # the same install put the kit's patch in: its own record covers it, no second backup
-    again = {"client": [], "added": [kit]}
-    MP.place_item_rows(str(client), MP.KIT_PATCH, rides, set(), str(tmp_path / "b2"), again, lambda m: None)
+    # the same install put that patch in: its own record covers it, no second backup
+    again = {"client": [], "added": [older]}
+    MP.place_item_rows(str(client), RP.PATCH, rides, set(), str(tmp_path / "b2"), again, lambda m: None)
     assert again["client"] == [] and not (tmp_path / "b2" / "client" / "patch-Y.MPQ").exists()
-    # another install replaces the kit's patch: the page says the icons went with it
-    _kit_patch(data, _item_displays((227000, "INV_Kit_Item")))
+    # another install replaces that patch: the page says the icons went with it
+    _item_patch(data, _item_displays((227000, "INV_Kit_Item")))
     assert MP.item_rows_gone(str(data), again) == ["patch-Y.MPQ"]
     # nothing above the mounts' patch: it carries the rows itself
-    os.remove(kit)
-    assert MP.place_item_rows(str(client), MP.KIT_PATCH, rides, set(), str(backup), {}, lambda m: None) == ""
+    os.remove(older)
+    assert MP.place_item_rows(str(client), RP.PATCH, rides, set(), str(backup), {}, lambda m: None) == ""
 
 
 def test_retail_direct_undo_leaves_an_archive_another_install_replaced(tmp_path, monkeypatch):
-    monkeypatch.setattr(K, "wow_running", lambda: False)
+    monkeypatch.setattr(J, "wow_running", lambda: False)
     client = _client(tmp_path)
     data = client / "Data"
-    kit = _kit_patch(data, _item_displays())
+    older = _item_patch(data, _item_displays())
     d = DR.Direct(str(tmp_path / "data"))
     d.client = str(client)
-    for name, fp in (("1", MP._fingerprint(kit)), ("2", [0, 0])):          # the archive as written; then not
+    for name, fp in (("1", MP._fingerprint(older)), ("2", [0, 0])):          # the archive as written; then not
         backup = os.path.join(d.work, "backups", f"2026102{name}-000000")
         os.makedirs(os.path.join(backup, "client"))
         write_archive(os.path.join(backup, "client", "patch-Y.MPQ"), {"before": name.encode()})
-        K._save_json(os.path.join(backup, "install.json"), {"time": name, "client": ["patch-Y.MPQ"], "added": [],
-                                                            "data": str(data), "item_rows": {"patch-Y.MPQ": fp}})
+        J.save_json(os.path.join(backup, "install.json"), {"time": name, "client": ["patch-Y.MPQ"], "added": [],
+                                                           "data": str(data), "item_rows": {"patch-Y.MPQ": fp}})
     assert d.undo()                                                         # the last one's archive changed since
-    m = MPQ(kit)
+    m = MPQ(older)
     try:
         assert m.read("before") is None
     finally:
         m.close()
     assert d.undo()                                                         # this one's is as it wrote it
-    m = MPQ(kit)
+    m = MPQ(older)
     try:
         assert m.read("before") == b"1"
     finally:

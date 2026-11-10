@@ -992,21 +992,22 @@ def workbench_cmd(
     bfa: str = typer.Option("", "--bfa", help="A local BfA (8.x) install to browse."),
     retail: str = typer.Option("", "--retail", help="A local retail install to browse (a partial one fetches "
                                "what it does not store from Blizzard's CDN, kept in the workbench cache)."),
-    client: str = typer.Option("", "--client", help="Your 3.3.5a client: items it already has are marked."),
+    client: str = typer.Option("", "--client", help="Your x64 client (the folder with WowClient64.exe): Install "
+                               "puts items there."),
     dbd: str = typer.Option("", "--dbd", help="WoWDBDefs 'definitions' folder."),
     listfile: str = typer.Option("", "--listfile", help="Community listfile.csv."),
     data: str = typer.Option("", "--data", help="Where the workbench keeps its cache and basket "
                              "(default %USERPROFILE%\\.retroport\\workbench)."),
-    port: int = typer.Option(8335, "--port"),
+    port: int = typer.Option(0, "--port", help="The page's port (default: the edition's, 8335)."),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open the page in your browser."),
 ) -> None:
-    """Browse and pick items and sets - retail's from wago.tools, or from your own installs.
+    """Retroport Workbench x64: browse retail's items, sets and mounts and install them into the x64 client.
 
     Without --retail / --bfa, retail's items and BfA's bodies (for the character view) come from
-    wago.tools.
+    wago.tools; Install reads retail from your own install (--retail).
 
     Options given are remembered (%USERPROFILE%\\.retroport\\workbench.json): later runs need none."""
-    from .workbench.server import Settings, serve
+    from .workbench.server import PORT, Settings, serve
 
     s = Settings.load()
     if bfa:
@@ -1019,7 +1020,7 @@ def workbench_cmd(
     s.save()
     for p in s.problems():
         console.print(f"[yellow]warn[/] {p}", highlight=False)
-    serve(s, port=port, open_browser=not no_browser, log=lambda m: console.print(m, highlight=False))
+    serve(s, port=port or PORT, open_browser=not no_browser, log=lambda m: console.print(m, highlight=False))
 
 
 def main() -> None:

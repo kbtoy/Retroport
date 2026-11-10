@@ -15,8 +15,7 @@ its own tables and kept on disk:
   set in its seasons' colours);
 * item sets - ItemSet: the classic tier sets, by item id.
 
-Ids are the game's own, so a set or item picked here is the one the retail backport kit's
-``select --set/--item`` takes.
+Ids are the game's own.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ SLOT_NAMES = {1: "Head", 3: "Shoulder", 4: "Shirt", 5: "Chest", 6: "Waist", 7: "
               10: "Hands", 13: "One-Hand", 14: "Shield", 15: "Ranged", 16: "Back", 17: "Two-Hand", 19: "Tabard",
               20: "Chest (robe)", 21: "Main Hand", 22: "Off Hand", 23: "Held In Off-hand", 25: "Thrown",
               26: "Ranged"}
-# the retail backport kit's --slots names -> InventoryType
+# slot names (the item filter's) -> InventoryType
 SLOT_GROUPS = {"head": {1}, "shoulder": {3}, "back": {16}, "chest": {5, 20}, "shirt": {4}, "tabard": {19},
                "wrist": {9}, "hands": {10}, "waist": {6}, "legs": {7}, "feet": {8},
                "mainhand": {13, 17, 21}, "offhand": {14, 22}, "held": {23}, "ranged": {15, 25, 26}}
@@ -418,7 +417,7 @@ class Catalog:
                                          default=0)})
         return len(hits), out
 
-    # -- what the kit builds ------------------------------------------------------
+    # -- what Install builds -------------------------------------------------------
     def display_items(self) -> dict[int, list[int]]:
         """display id -> the items that show it (by their default look first, then their versions)."""
         idx = getattr(self, "_display_items", None)
@@ -435,10 +434,10 @@ class Catalog:
         return idx
 
     def looks_for(self, entry: dict) -> tuple[list[dict], list[int]]:
-        """A basket entry's looks as the kit selects them (one per display) and its items: a set's
+        """A basket entry's looks as Install makes them (one per display) and its items: a set's
         pieces, an item's every version, an item set's items' versions."""
         kind, eid = entry.get("kind"), entry.get("id")
-        if kind == "look":                              # one display, as the kit selects it (--display)
+        if kind == "look":                              # one display
             iid = (self.display_items().get(int(eid or 0)) or [None])[0]
             r = self.by_id.get(iid) if iid else None
             if r is None:
