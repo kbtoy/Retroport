@@ -51,11 +51,20 @@ def test_a_visuals_models_by_way_of_its_points_effects_and_kits():
     idx = GL.index(ROWS)
     assert 457 not in idx                                                    # no model: no glow
     assert sorted(map(tuple, idx[456])) == sorted([
-        (240835, "point", 0, None, ""), (240836, "point", 1, None, ""),
-        (3000001, "kit", 1, None, ""),                                      # the kit's own attach row
-        (3000002, "kit", 2, None, GL.MODEL_POSITION),                       # a type-2 kit effect's
-        (2086123, "effect", 7, GL.ANY, ""), (2086124, "effect", 1, STAFF, ""),
-        (3000003, "kit", 3, STAFF, "an anim kit"), (2086125, "effect", 1, 7, "")])
+        (240835, "point", 0, None, "", 1.0), (240836, "point", 1, None, "", 1.0),
+        (3000001, "kit", 1, None, "", 1.0),                                 # the kit's own attach row
+        (3000002, "kit", 2, None, GL.MODEL_POSITION, 1.0),                  # a type-2 kit effect's
+        (2086123, "effect", 7, GL.ANY, "", 1.0), (2086124, "effect", 1, STAFF, "", 1.5),
+        (3000003, "kit", 3, STAFF, "an anim kit", 1.0), (2086125, "effect", 1, 7, "", 1.0)])
+
+
+def test_the_preview_hangs_what_the_client_draws_at_every_point():
+    rows = dict(ROWS) | {"ItemVisuals": [(1, {"SpellVisualKitId1": 0, "SpellVisualKitId2": 0,
+                                              "ModelFileID": [240835] * 5})]}
+    assert sorted((g.fdid, g.point) for g in GL.placements(GL.index(rows)[1], None)) == [(240835, p) for p in range(5)]
+    staff = GL.placements(GL.index(ROWS)[456], {"ClassID": GL.WEAPON, "SubclassID": STAFF})
+    assert {(g.fdid, g.point, g.scale) for g in staff} == {(240835, 0, 1.0), (240836, 1, 1.0), (3000001, 1, 1.0),
+                                                          (2086124, 1, 1.5)}    # not the any-item or refused ones
 
 
 def test_a_look_takes_its_items_glows_only():

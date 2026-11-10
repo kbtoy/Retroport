@@ -38,7 +38,7 @@ TABLES = {
 ROWS = {"ItemVisuals": "itemvisuals", "ItemVisualsXEffect": "itemvisualsxeffect",
         "SpellVisualKitEffect": "spellvisualkiteffect", "SpellVisualKitModelAttach": "spellvisualkitmodelattach",
         "SpellVisualEffectName": "spellvisualeffectname"}
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 WEAPON = 2                                   # Item.ClassID of a weapon
 ANY = -1                                     # DisplayWeaponSubclassID: any item
 
@@ -53,6 +53,7 @@ class Glow:
     route: str                               # "point", "effect" or "kit"
     point: int                               # the attachment point on the item's model
     skip: str = ""                           # why the client doesn't draw it ("" when it does)
+    scale: float = 1.0                       # its size on the item, as the client scales it
 
 
 def _f(v) -> float:
@@ -95,9 +96,19 @@ def kit_skip(attach: dict, name: dict | None) -> str:
     return ""
 
 
+def _scale(*values) -> float:
+    """Scales multiplied as the client does: one that isn't a positive number counts as 1."""
+    out = 1.0
+    for v in values:
+        f = _f(v)
+        out *= f if math.isfinite(f) and f > 0 else 1.0
+    return round(out, 6)
+
+
 def index(rows: dict[str, list[tuple[int, dict]]]) -> dict[int, list[list]]:
-    """{visual id: [[fdid, route, point, subclass, skip], ...]} from the ``ROWS`` tables' rows. subclass:
-    None for the visual's own models and kits (every item), else the ItemVisualsXEffect row's
+    """{visual id: [[fdid, route, point, subclass, skip, scale], ...]} from the ``ROWS`` tables' rows
+    (the kit tables may be left out: the visuals' own models and effect rows then). subclass: None for
+    the visual's own models and kits (every item), else the ItemVisualsXEffect row's
     DisplayWeaponSubclassID (-1 any item). Rows without a model are left out; JSON as it is."""
     visuals = {i: r for i, r in rows.get("ItemVisuals", [])}
     effects: dict[int, list[dict]] = {}
@@ -118,29 +129,30 @@ def index(rows: dict[str, list[tuple[int, dict]]]) -> dict[int, list[list]]:
             by_kit.setdefault(kit, []).append(r["Effect"])
     names = {i: r for i, r in rows.get("SpellVisualEffectName", [])}
 
-    def kit_models(kit: int) -> list[tuple[int, int, str]]:
+    def kit_models(kit: int) -> list[tuple[int, int, str, float]]:
         out = []
         for a in dict.fromkeys(by_kit.get(kit, [])):
             row = attaches[a]
             name = names.get(row.get("SpellVisualEffectNameID") or 0)
             fdid = (name or {}).get("ModelFileDataID") or 0
             if fdid:
-                out.append((fdid, row.get("AttachmentID") or 0, kit_skip(row, name)))
+                out.append((fdid, row.get("AttachmentID") or 0, kit_skip(row, name),
+                            _scale(row.get("Scale"), name.get("Scale"))))
         return out
 
     out: dict[int, list[list]] = {}
     for v, r in sorted(visuals.items()):
-        glows = [[f, "point", p, None, ""] for p, f in enumerate(list(r.get("ModelFileID") or [])[:5]) if f]
+        glows = [[f, "point", p, None, "", 1.0] for p, f in enumerate(list(r.get("ModelFileID") or [])[:5]) if f]
         for k in dict.fromkeys(k for k in (r.get("SpellVisualKitId1"), r.get("SpellVisualKitId2")) if k):
-            glows += [[f, "kit", p, None, s] for f, p, s in kit_models(k)]
+            glows += [[f, "kit", p, None, s, sc] for f, p, s, sc in kit_models(k)]
         for e in effects.get(v, []):
             sub = e.get("DisplayWeaponSubclassID")
             sub = ANY if sub is None or sub < 0 else sub
             f = e.get("AttachmentModelFileID") or 0
             if f and _f(e.get("Scale", 1)) > 0:
-                glows.append([f, "effect", e.get("AttachmentID") or 0, sub, ""])
+                glows.append([f, "effect", e.get("AttachmentID") or 0, sub, "", _scale(e.get("Scale", 1))])
             if e.get("SpellVisualKitID"):
-                glows += [[f, "kit", p, sub, s] for f, p, s in kit_models(e["SpellVisualKitID"])]
+                glows += [[f, "kit", p, sub, s, sc] for f, p, s, sc in kit_models(e["SpellVisualKitID"])]
         if glows:
             out[v] = glows
     return out
@@ -161,14 +173,26 @@ def for_look(glows: list[list] | None, item: dict | None) -> list[Glow]:
     """A look's glows from its visual's ``index`` entry, for its retail Item row: the visual's own
     models and kits, the effect rows for any item (which the client doesn't draw yet), and those for
     the item's weapon type when it is a weapon. Each model once (the first that the client draws)."""
-    weapon = (item or {}).get("SubclassID") if (item or {}).get("ClassID") == WEAPON else None
     out: dict[int, Glow] = {}
-    for fdid, route, point, sub, skip in glows or []:
+    for g in _applying(glows, item):
+        if g.fdid not in out or (out[g.fdid].skip and not g.skip):
+            out[g.fdid] = g
+    return list(out.values())
+
+
+def placements(glows: list[list] | None, item: dict | None) -> list[Glow]:
+    """What the client hangs on a look's model: each glow it draws (``for_look``'s rules), at every
+    point the visual names it - one model on all five points is five. For the preview."""
+    return list({(g.fdid, g.point): g for g in _applying(glows, item) if not g.skip}.values())
+
+
+def _applying(glows: list[list] | None, item: dict | None) -> list[Glow]:
+    weapon = (item or {}).get("SubclassID") if (item or {}).get("ClassID") == WEAPON else None
+    out = []
+    for fdid, route, point, sub, skip, *rest in glows or []:
         if sub == ANY:
             skip = skip or ANY_ITEM
         elif sub is not None and sub != weapon:
             continue                                 # another weapon type's: retail doesn't draw it either
-        g = Glow(fdid, route, point, skip)
-        if fdid not in out or (out[fdid].skip and not skip):
-            out[fdid] = g
-    return list(out.values())
+        out.append(Glow(fdid, route, point, skip, rest[0] if rest else 1.0))
+    return out

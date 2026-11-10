@@ -48,6 +48,7 @@ from . import catalog as C
 from . import character as CH
 from . import direct as DR
 from . import edition
+from . import glows as GL
 from . import itemstats as IS
 from . import jobs as J
 from . import models as M
@@ -183,6 +184,7 @@ class Workbench:
         self._displays: dict[str, M.DisplayIndex] = {}
         self._races: list[dict] | None = None
         self._meshes: dict[tuple, dict] = {}
+        self._glows: dict[str, dict[int, list]] = {}       # source -> its item glows by visual (``glows_of``)
         self._race_names: dict[str, dict[int, str]] = {}
         self._specs: dict[str, C.SourceSpec] = {}
         self._client_seen = None
@@ -208,7 +210,8 @@ class Workbench:
         specs = {sp.key: sp for sp in st.effective_sources()}
         for key in list(self._specs):
             if specs.get(key) != self._specs[key]:
-                for d in (self.sources, self.catalogs, self.mount_catalogs, self._displays, self.state, self._race_names):
+                for d in (self.sources, self.catalogs, self.mount_catalogs, self._displays, self.state, self._race_names,
+                          self._glows):
                     d.pop(key, None)
         readers = {}
         for key, sp in specs.items():
@@ -646,12 +649,47 @@ class Workbench:
             self._meshes[k] = M.mesh(self.reader(key).read, fdid, textures)
         return self._meshes[k]
 
+    def glows_of(self, key: str) -> dict[int, list]:
+        """The source's item glows by visual (``glows.index``) over its ItemVisuals and ItemVisualsXEffect
+        alone: the kit models it leaves out the client doesn't draw yet, and the kit tables take half a
+        minute to read. {} for a source without them (BfA has them too)."""
+        if key not in self._glows:
+            src = self.reader(key)
+            try:
+                self._glows[key] = GL.index({n: src.table(n) for n in ("ItemVisuals", "ItemVisualsXEffect")})
+            except Exception as e:
+                self.say(f"{key}: item glows: {type(e).__name__}: {e}")
+                self._glows[key] = {}
+        return self._glows[key]
+
+    def display_glows(self, key: str, display: int) -> list[dict]:
+        """The glows the client hangs on a display's models (``glows.placements``): each with its model's
+        mesh, the attachment point and scale - for the item the display is first the look of (a weapon's
+        type picks its effect rows)."""
+        visual = self.displays(key).visual.get(display)
+        if not visual:
+            return []
+        cat = self.catalogs.get(key)
+        item = None
+        if cat is not None:
+            first = (cat.display_items().get(display) or [None])[0]
+            r = cat.by_id.get(first) if first else None
+            item = {"ClassID": r[C.F["cls"]], "SubclassID": r[C.F["sub"]]} if r else None
+        out = []
+        for g in GL.placements(self.glows_of(key).get(visual), item)[:16]:
+            try:
+                out.append({"fdid": g.fdid, "point": g.point, "scale": g.scale, "mesh": self.mesh(key, g.fdid, {})})
+            except Exception:                           # one glow that won't read never hides the item
+                continue
+        return out
+
     def preview(self, key: str, display: int, race: str, sex: int) -> dict:
         """An item display's models (as meshes, with Stand) and body textures, for that race and sex."""
         idx = self.displays(key)
         item_race, _bfa = self.race_ids(key, race)
         out = {"display": display, "race": race, "sex": sex, "models": [], "problems": [],
-               "body": idx.body_textures(display, item_race, sex), "row": idx.row(display), "made_for": "", "shown_as": ""}
+               "body": idx.body_textures(display, item_race, sex), "row": idx.row(display), "made_for": "", "shown_as": "",
+               "particle": idx.particle.get(display)}         # its emitters' colours (slots 11-13), as the client's
         found = idx.models(display, item_race, sex)
         races = idx.model_races(display)
         if not found and races:
@@ -668,6 +706,7 @@ class Workbench:
                 out["models"].append(m | {"mesh": self.mesh(key, m["fdid"], m["textures"])})
             except Exception as e:                      # one bad model never hides the rest
                 out["problems"].append(f"model {m['fdid']}: {type(e).__name__}: {e}")
+        out["glows"] = self.display_glows(key, display) if out["models"] else []
         return out
 
     def mount_catalog(self, key: str) -> MT.MountCatalog:
@@ -684,14 +723,15 @@ class Workbench:
         d = cat.displays.get(int(display))
         if d is None:
             raise LookupError(f"no mount display {display}")
-        textures = {11 + i: f for i, f in enumerate((d.get("textures") or [])[:3]) if f}
+        # its skins on the model's texture types as the client puts them: 11-13, and a fourth on type 5
+        # (mounts.SKIN_TYPES: the client's ReplaceMonsterSkin, from Install's skin table)
+        textures = {MT.SKIN_TYPES[i]: f for i, f in enumerate((d.get("textures") or [])[:len(MT.SKIN_TYPES)]) if f}
         packed, lost = MT.geoset_data(d.get("geosets"))
         out = {"display": int(display), "model": d.get("model"), "textures": [f for f in d.get("textures") or [] if f],
-               "geosets": {str(g): v for g, v in MT.geosets_shown(packed).items()}, "problems": [], "mesh": None}
+               "geosets": {str(g): v for g, v in MT.geosets_shown(packed).items()}, "problems": [], "mesh": None,
+               "particle": d.get("particle")}                 # its emitters' colours (slots 11-13)
         if lost:
             out["problems"].append(f"3.3.5 can't choose some of its parts ({lost}): they all show")
-        if len([f for f in (d.get("textures") or [])[3:] if f]):
-            out["problems"].append("its fourth skin texture has no place in 3.3.5")
         try:
             out["mesh"] = self.mesh(cat.source, d["model"], textures)
         except Exception as e:
@@ -718,7 +758,8 @@ class Workbench:
             piece = {"display": display, "slot": slot, "row": row, "body": idx.body_textures(display, item_race, sex),
                      "hides": idx.helmet_hidden(display, item_race, sex) if slot == 1 else [], "models": [],
                      # a cloak paints the body's cape geosets (M2 texture type 2) with its material
-                     "cape": idx.texture(row["materials"][0], item_race, sex) if slot == 16 and row["materials"][0] else 0}
+                     "cape": idx.texture(row["materials"][0], item_race, sex) if slot == 16 and row["materials"][0] else 0,
+                     "particle": idx.particle.get(display)}       # its emitters' colours (slots 11-13)
             for m in idx.models(display, item_race, sex):
                 if m["type"] == M.ATTACHED:
                     m = m | {"attach": CH.SHOULDER_POINTS.get(m["position"], 6) if slot == 3
@@ -727,6 +768,7 @@ class Workbench:
                     piece["models"].append(m | {"mesh": self.mesh(key, m["fdid"], m["textures"])})
                 except Exception as e:
                     problems.append(f"display {display} model {m['fdid']}: {type(e).__name__}: {e}")
+            piece["glows"] = self.display_glows(key, display) if piece["models"] else []
             races = idx.model_races(display)
             if not piece["models"] and races:               # heritage armour of another race
                 piece["made_for"] = ", ".join(self.race_name(key, r) for r in races) if len(races) <= 3 else \

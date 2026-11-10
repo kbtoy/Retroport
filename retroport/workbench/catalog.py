@@ -30,7 +30,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable
 
-CATALOG_VERSION = 3
+CATALOG_VERSION = 4
 
 # InventoryType values that show on a character or in its hands
 LOOK_SLOTS = {1, 3, 4, 5, 6, 7, 8, 9, 10, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 25, 26}
@@ -309,7 +309,8 @@ class Catalog:
         out["appearances"] = [dict(zip(("modifier", "appearance", "icon", "display", "label"), a))
                               for a in self.appearances.get(item_id, [])]
         out["sets"] = [self.set_summary(self.set_by_id[s]) for s in self.item_to_sets.get(item_id, [])
-                       if s in self.set_by_id and not self.set_by_id[s].get("covered_by")]
+                       if s in self.set_by_id and not self.set_by_id[s].get("covered_by")
+                       and not is_junk(self.set_by_id[s].get("name") or "")]     # not Blizzard's "[DNT]" sets
         out["item_sets"] = [{"id": s["id"], "name": s["name"]} for s in self.item_sets if item_id in s["items"]]
         out["in_client"] = item_id in self.in_client
         same = [o[0] for o in self.items if o[F["appearance"]] == r[F["appearance"]] and o[0] != item_id]
@@ -573,11 +574,16 @@ def build_catalog(src: Source, log: Callable[[str], None] = lambda m: None) -> C
     labels = {i: r["Description_lang"] for i, r in tables["ItemNameDescription"]}
     raw_sets = {i: r for i, r in tables["TransmogSet"]}
     # what a modified appearance is called, by the set that uses it ("Gladiator", "Elite"): PvP and
-    # newer modifiers have no name of their own
+    # newer modifiers have no name of their own. Blizzard's internal sets ("[DNT] 12.0 Mythic VFX Unlock")
+    # name nothing; ``in_real_set``: the modified appearances a set players see uses
     ima_label: dict[int, str] = {}
+    in_real_set: set[int] = set()
     for _i, r in tables["TransmogSetItem"]:
         s = raw_sets.get(r["TransmogSetID"])
-        name = s and (labels.get(s["ItemNameDescriptionID"]) or groups.get(s["TransmogSetGroupID"]))
+        if not s or is_junk(s.get("Name_lang") or ""):
+            continue
+        in_real_set.add(r["ItemModifiedAppearanceID"])
+        name = labels.get(s["ItemNameDescriptionID"]) or groups.get(s["TransmogSetGroupID"])
         if name and r["ItemModifiedAppearanceID"] not in ima_label:
             ima_label[r["ItemModifiedAppearanceID"]] = name
 
@@ -586,6 +592,14 @@ def build_catalog(src: Source, log: Callable[[str], None] = lambda m: None) -> C
         if a is None:
             return fallback_icon, 0
         return a["DefaultIconFileDataID"] or fallback_icon, a["ItemDisplayInfoID"]
+
+    def wearable(appearance: int) -> bool | None:
+        """False for an appearance behind a player condition (ItemAppearance.TransmogPlayerConditionID):
+        with no name and in no set players see, it's one of Blizzard's locked variants - the 12.0 "Mythic
+        VFX unlock" looks (modifiers 154-158, ~2,300 of them, most only in "[DNT]" sets) - not a version a
+        player wears. None when the appearance isn't known."""
+        a = apps.get(appearance)
+        return None if a is None else not a.get("TransmogPlayerConditionID")
 
     items, appearances = [], {}
     for iid, r in tables["Item"]:
@@ -604,6 +618,8 @@ def build_catalog(src: Source, log: Callable[[str], None] = lambda m: None) -> C
         versions: dict[int, list] = {}
         for m, _o, a, i in variants:
             label = MODIFIERS.get(m) or ima_label.get(i, "")
+            if a != default_app and not label and i not in in_real_set and wearable(a) is False:
+                continue                                 # a version no player wears (see ``wearable``)
             if a in versions:
                 versions[a][4] = versions[a][4] or label
             else:
