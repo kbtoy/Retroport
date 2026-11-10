@@ -806,7 +806,9 @@ function renderKit() {
     `your local install into ${st.patch_name} - nothing converted.`);
   const sm = st.summary || {};
   if (sm.files) notes.push(`Last build: ${plural(sm.items || 0, "item")}, ${plural(sm.files, "file")} (${sm.mb} MB)` +
-    (sm.unreadable ? `, <span class="warn">${sm.unreadable} unreadable from your install</span>` : "") + ".");
+    (sm.unreadable ? `, <span class="warn">${sm.unreadable} unreadable from your install</span>` : "") +
+    (sm.glows ? `; ${plural(sm.glows, "look")} with a retail item glow (${sm.glows_drawn} of ` +
+      `${plural(sm.glow_models, "glow model")} drawn by ${ed().client})` : "") + ".");
   const cc = sm.client_check;
   if (cc) notes.push((cc.failed.length ? `<span class="warn">!</span> ` : `<span class="ok">✓</span> `) +
     `Checked in the client ${when(cc.time)}: ${cc.same} of ${plural(cc.models, "model")} read as retail has them` +
