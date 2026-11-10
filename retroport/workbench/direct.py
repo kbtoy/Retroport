@@ -352,7 +352,7 @@ class Direct:
             data = src.raw_table(name)
             got = RP.layout_of(data)
             if got != want:
-                raise ValueError(f"{name}.db2 of retail {self.retail_build()} has layout {got or 0:08X}; the x64 client "
+                raise ValueError(f"{name}.db2 of retail {self.retail_build()} has layout {got or 0:08X}; {edition.CLIENT_NAME} "
                                  f"reads {want:08X} - this client and retail build don't go together")
             tables[name] = data
         self.say(f"   {len(tables)} tables, {sum(map(len, tables.values())) / 1048576:.1f} MB, each the layout the client reads")
@@ -408,7 +408,7 @@ class Direct:
                                        **RP.item_fields(r), label=label))
                 if display in dbc_displays:
                     self.say(f"!  {look.get('name')}: display {display} is a row of your client's ItemDisplayInfo.dbc "
-                             "(3.3.5's own or an older tool's) - the x64 client draws that row, not retail's")
+                             f"(3.3.5's own or an older tool's) - {edition.CLIENT_NAME} draws that row, not retail's")
             self._save_ids(ids)
 
             # the files: each display's models (every race and sex) and textures, each model's own
@@ -490,7 +490,7 @@ class Direct:
             for fdid, why in unreadable[:8]:
                 self.say(f"     FileDataID {fdid}: {why}")
         if visuals:
-            self.say(f"   {visuals} look(s) have a retail item glow (ItemVisual) - the x64 client doesn't draw those from retail yet")
+            self.say(f"   {visuals} look(s) have a retail item glow (ItemVisual) - {edition.CLIENT_NAME} doesn't draw those from retail yet")
         unnamed = [f for f in files if f not in names and f not in have]
         if unnamed:
             self.say(f"   {len(unnamed)} file(s) the listfile doesn't name: put beside their model as wxl_<id>")
@@ -653,13 +653,13 @@ class Direct:
             self.say("   cleared the client's Cache folder")
         J.save_json(os.path.join(backup, "install.json"), record)
         self.say("Installed. Apply the SQL to your world database, restart the worldserver, then log in "
-                 "with the x64 client:")
+                 f"with {edition.CLIENT_NAME}:")
         for p in self.sql_files():
             self.say(f"   {p}")
         return True
 
     def client_check(self) -> bool:
-        """The installed patch's models as the x64 client reads them in play, natively: the client run
+        """The installed patch's models as the client reads them in play, natively: the client run
         in its model check mode (WXL_RETAIL_MODEL_CHECK, retroport-native's x64_native_model_check.py) on
         the patch's .m2 files - a window opens and closes by itself, about a second a model. Each model
         is read by the native loader and by the converter and the two compared: "same" or "DIFFERS"
@@ -850,7 +850,7 @@ class Direct:
             J.remove_any(p)
             self.say(f"   client: removed {p}")
         os.replace(os.path.join(backup, "install.json"), os.path.join(backup, "install.json.undone"))
-        self.say("Undone. Clear the client's Cache folder; the SQL rows stay (without the patch the x64 client "
+        self.say(f"Undone. Clear the client's Cache folder; the SQL rows stay (without the patch {edition.CLIENT_NAME} "
                  "draws them without a model).")
         return True
 

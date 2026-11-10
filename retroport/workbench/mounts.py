@@ -441,7 +441,7 @@ def state_table(rides: list[Ride]) -> bytes | None:
     if not lines:
         return None
     return ("# display\tattach\tattachment (255: none)\tmodel\tscale\talpha\toffset\tyaw,pitch,roll\tanimation\t"
-            "start\tend - the models a display's retail state kit attaches (the x64 client)\r\n"
+            "start\tend - the models a display's retail state kit attaches (Ultra WoW's client)\r\n"
             + "\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
@@ -736,7 +736,7 @@ def skin_table(rides: list[Ride]) -> bytes | None:
     if not lines:
         return None
     return ("# display\ttexture type\tname in the model's folder: retail's skins past CreatureDisplayInfo's "
-            "three (the x64 client)\r\n" + "\r\n".join(lines) + "\r\n").encode("utf-8")
+            "three (Ultra WoW's client)\r\n" + "\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
 def display_row(cdi, r: Ride) -> list[int]:

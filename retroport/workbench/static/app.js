@@ -521,9 +521,17 @@ function removeEntries(keys, what) {
   toast(`Removed ${what}`, "Undo", () => { S.basket.push(...gone.filter(g => !inBasket(keyOf(g)))); saveBasket(); });
 }
 
+// the edition this workbench is (edition.py): its name, the client it installs into and its program
+const ed = () => (S.status && S.status.edition) || {name: "Retroport Workbench", client: "the client", exe: "the game's program"};
 // which workbench this page talks to; a page whose workbench was replaced by another copy closes
 // (or, left open, reloads from the new one)
 function appState(st) {
+  if (st.edition) {
+    document.title = st.edition.name;
+    $("#ed-tag").textContent = st.edition.name.replace(/^Retroport Workbench\s*/, "");
+    $$(".ed-client").forEach(e => e.textContent = st.edition.client);
+    $$(".ed-exe").forEach(e => e.textContent = st.edition.exe);
+  }
   if (st.app) {
     $("#app-version").textContent = "v" + st.app.version.replace(" (source)", "");
     $("#app-version").title = `${(st.edition || {}).name || "Retroport Workbench"} ${st.app.version}\nrunning from ${st.app.from}`;
@@ -696,7 +704,7 @@ function renderSettings() {
   $("#st-welcome").hidden = !v.first_run;
   $("#st-data").textContent = v.data_dir;
   $("#st-game").replaceChildren(
-    stField("client", "x64 client folder", v.client, {hint: "the folder with WowClient64.exe and Data"}),
+    stField("client", ed().client.replace(/^the /, "") + " folder", v.client, {hint: `the folder with ${ed().exe} and Data`}),
     check ? el("span", {class: "fcheck " + (check[0] ? "ok" : "warn")}, (check[0] ? "✓ " : "! ") + check[1]) : null,
     el("span", {class: "fhint muted"}, "Install puts retail's own items into this client and writes their SQL for your " +
        "server; it keeps its install, history and Undo in " + v.direct.work + "."));
@@ -852,7 +860,7 @@ function renderKit() {
   if (last) {
     result.push(el("div", {class: "kit-note"}, `Last install ${when(last.time)}: ` +
       [...last.client, ...last.added.map(a => a.split(/[\\/]/).pop())].join(", ") +
-      ". Restart the worldserver, then log in with the x64 client."));
+      `. Restart the worldserver, then log in with ${ed().client}.`));
     for (const p of st.sql) result.push(el("div", {class: "kit-note sql"}, "Yours to do: apply the item SQL to your world database - ",
       el("code", {}, `SOURCE ${slash(p)};`), " ", el("button", {class: "copy", onclick: () => copy(`SOURCE ${slash(p)};`)}, "copy")));
   }
@@ -887,14 +895,14 @@ function wireKit() {
   $("#k-go").addEventListener("click", () => {
     const c = K.status.settings;
     const pl = K.status.plan || {};
-    if (confirm(`Install retail's own items into the x64 client - ${pl.adds ? `adding ${plural(pl.adds, "entry")} from the basket` :
+    if (confirm(`Install retail's own items into ${ed().client} - ${pl.adds ? `adding ${plural(pl.adds, "entry")} from the basket` :
                 "the basket"}${pl.take_out ? `, taking out ${pl.take_out}` : ""}${pl.in_game ? ", keeping the rest of your game" : ""}:\n` +
                 `${c.client_data}\n\nIt writes ${K.status.patch_name} (backing up the one it replaces - Undo puts it back) and ` +
                 "the item SQL for your server, which you apply. It runs no SQL and leaves the server's dbc folder alone. Close WoW first."))
       kitRun("go");
   });
   $("#k-check").addEventListener("click", () => {
-    if (confirm("Check the last install in the x64 client? WoW opens in its check mode (no login), reads every " +
+    if (confirm(`Check the last install in ${ed().client}? WoW opens in its check mode (no login), reads every ` +
                 `model ${K.status.patch_name} holds the way play reads them, and closes by itself - about a second ` +
                 "a model. The log lists any it refuses or draws differently. Close WoW first."))
       kitRun("check");
