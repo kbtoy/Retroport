@@ -17,6 +17,11 @@ Workbench, which converted items for any 3.3.5a client through the retail backpo
 it - what it can hold in a 32-bit program's memory may mean this branch has to install less than the
 x64 one does.
 
+**Only for a 32-bit client on a server of its own.** This Workbench keeps its own basket, installs and
+item SQL. On the server the x64 clients play on, it and the x64 Workbench would undo each other's
+items - each install's SQL deletes every item row that Workbench ever made, then inserts its own list.
+A 32-bit client on the same server takes what the x64 Workbench installs instead.
+
 ## What it does
 
 - **Browse** all of retail's items (about 99,000) and transmog sets (about 5,000). Search by name or
