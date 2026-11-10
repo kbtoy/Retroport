@@ -192,8 +192,8 @@ state and the small file helpers, `edition` which client this Workbench installs
 What the x64 client reads (wowdecomp-dx11-next, read-only reference): `WXL/modules/db2/items`
 loads retail's `item`, `itemappearance`, `itemmodifiedappearance`, `itemdisplayinfo`,
 `itemdisplayinfomaterialres`, `itemdisplayinfomodelmatres`, `modelfiledata`, `texturefiledata`,
-`componentmodelfiledata`, `componenttexturefiledata`, `helmetgeosetdata` and `helmetanimscaling`
-(`RetailSchemas.hpp`; `retailpack.TABLES` holds their layout hashes - 12.1.5's) and turns each
+`componentmodelfiledata`, `componenttexturefiledata`, `helmetgeosetdata`, `helmetanimscaling` and
+`particlecolor` (`RetailSchemas.hpp`; `retailpack.TABLES` holds their layout hashes - 12.1.5's) and turns each
 FileDataID into a path with `DBFilesClient\ModelFilePath.db2` / `TextureFilePath.db2`
 (`FdidCompat.cpp`; WDC1, inline id + string offset - patch-R's, written by retroport-native's
 `x64_retail_pack.py`). A display id its ItemDisplayInfo.dbc has is drawn from that row instead
@@ -203,11 +203,14 @@ display (`VisibleItem_C::GetDisplayID`). `modules/equipment/EquipmentAttachments
 models: it opens `Item\ObjectComponents\<folder>\<name>.m2` (folder = the one after
 objectcomponents, name = after `collections\` or the file's name), a model's own texture
 (ModelMaterialResourcesID, the first TextureFileData row) by its name *in the model's folder*, and
-material textures (body layers, ModelMatRes) at their full paths.
+material textures (body layers, ModelMatRes) at their full paths. A retail display's particle
+colours (ItemDisplayInfo.ParticleColorID) come from retail's `particlecolor` (the item worker loads
+it, retail tree c4f46d0): `ApplyItemVisual` gives them to the item model's emitters of colour slot
+11-13. The synthesized native row keeps that id 0.
 
 Install (`Direct.go`):
 
-1. **read** - the twelve tables from the local install (`Source.raw_table`, encrypted sections
+1. **read** - the thirteen tables from the local install (`Source.raw_table`, encrypted sections
    zeroed), each layout checked; eight read into rows. Then the glow tables (`glows.TABLES`: ten,
    29 MB in 12.1.5): all of them, or none - with a warning - when one is another layout or
    unreadable. `Direct.read_glows` walks them (`glows.index`: visual -> its models) once per

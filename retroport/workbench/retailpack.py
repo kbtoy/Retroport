@@ -34,6 +34,9 @@ TABLES = {
     "itemdisplayinfomodelmatres": 0x52510D63, "modelfiledata": 0x2AE4E788, "texturefiledata": 0xBD7C74C2,
     "componentmodelfiledata": 0xAD90D87A, "componenttexturefiledata": 0xB32B030A,
     "helmetgeosetdata": 0x103B3B37, "helmetanimscaling": 0xFF7E3A8A,
+    # a display's particle colours (ItemDisplayInfo.ParticleColorID: its emitters of colour slot 11-13;
+    # ItemVisualGraph.cpp loads it, ItemGraphParticleColors looks a display's up)
+    "particlecolor": 0xD58506F1,
 }
 # The patch retail direct installs (``patch_for``): patch-Q for a client that reads every archive's
 # path tables (FdidCompat.cpp, 2026-11-03) - over patch-H's spell tables, under patch-R and the undead
