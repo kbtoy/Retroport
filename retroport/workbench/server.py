@@ -22,7 +22,7 @@ API (GET unless noted):
   /api/settings                  GET the Settings view; POST saves it (a changed source is read again)
   POST /api/pick {folder, title, start}   Windows' folder/file picker on this machine -> {path}
   /api/races                     the races the 3.3.5 client plays (the character view's choices)
-  /api/preview?source=&display=&race=&sex=     a display's models (meshes, Stand) and body textures
+  /api/preview?source=&display=&race=&sex=&slot=     a display's models (meshes, Stand) and body textures
   /api/body?race=&sex=           a BfA body: mesh, skin layers, layout, hair, default geosets
   /api/outfit?source=&race=&sex=&items=<display>:<slot>,...   what each piece puts on that body
   /icon/<source>/<fdid>.png      an icon from the source's files (cached as PNG); /tex/... a texture
@@ -641,12 +641,12 @@ class Workbench:
             self._race_names[key] = names
         return names.get(race, f"race {race}")
 
-    def mesh(self, key: str, fdid: int, textures: dict) -> dict:
-        k = (key, fdid, tuple(sorted(textures.items())))
+    def mesh(self, key: str, fdid: int, textures: dict, anim: int = 0) -> dict:
+        k = (key, fdid, tuple(sorted(textures.items())), anim)
         if k not in self._meshes:
             if len(self._meshes) > 200:
                 self._meshes.clear()
-            self._meshes[k] = M.mesh(self.reader(key).read, fdid, textures)
+            self._meshes[k] = M.mesh(self.reader(key).read, fdid, textures, anim=anim)
         return self._meshes[k]
 
     def glows_of(self, key: str) -> dict[int, list]:
@@ -683,21 +683,22 @@ class Workbench:
                 continue
         return out
 
-    def preview(self, key: str, display: int, race: str, sex: int) -> dict:
-        """An item display's models (as meshes, with Stand) and body textures, for that race and sex."""
+    def preview(self, key: str, display: int, race: str, sex: int, slot: int = 0) -> dict:
+        """An item display's models (as meshes, with Stand) and body textures, for that race and sex;
+        ``slot``, the item's inventory type, says which models are collections as the client does."""
         idx = self.displays(key)
         item_race, _bfa = self.race_ids(key, race)
         out = {"display": display, "race": race, "sex": sex, "models": [], "problems": [],
                "body": idx.body_textures(display, item_race, sex), "row": idx.row(display), "made_for": "", "shown_as": "",
                "particle": idx.particle.get(display)}         # its emitters' colours (slots 11-13), as the client's
-        found = idx.models(display, item_race, sex)
+        found = idx.models(display, item_race, sex, slot)
         races = idx.model_races(display)
         if not found and races:
             # no model for this race (heritage armour is made for one): show another race's - one the
             # 3.3.5 client plays first - and say whose
             played = {r["sources"].get(key) for r in self.races()}
             other = next((r for r in races if r in played), races[0])
-            found = idx.models(display, other, sex)
+            found = idx.models(display, other, sex, slot)
             out["shown_as"] = self.race_name(key, other)
             if len(races) <= 3:
                 out["made_for"] = ", ".join(self.race_name(key, r) for r in races)
@@ -729,13 +730,22 @@ class Workbench:
         packed, lost = MT.geoset_data(d.get("geosets"))
         out = {"display": int(display), "model": d.get("model"), "textures": [f for f in d.get("textures") or [] if f],
                "geosets": {str(g): v for g, v in MT.geosets_shown(packed).items()}, "problems": [], "mesh": None,
-               "particle": d.get("particle")}                 # its emitters' colours (slots 11-13)
+               "particle": d.get("particle"),                 # its emitters' colours (slots 11-13)
+               # its state kit as the x64 client draws it (DisplayStates.cpp): the models it hangs on the mount, its
+               # gradient shading, and its dissolve - only the blend style's (flag 0x2000), as the client's
+               "state": [], "gradient": d.get("gradient"),
+               "dissolve": d.get("dissolve") if (d.get("dissolve") or {}).get("flags", 0) & 0x2000 else None}
         if lost:
             out["problems"].append(f"3.3.5 can't choose some of its parts ({lost}): they all show")
         try:
             out["mesh"] = self.mesh(cat.source, d["model"], textures)
         except Exception as e:
             out["problems"].append(f"model {d.get('model')}: {type(e).__name__}: {e}")
+        for s in (d.get("state") or [])[:8] if out["mesh"] else []:
+            try:
+                out["state"].append(s | {"mesh": self.mesh(cat.source, s["model"], {}, s.get("anim") or 0)})
+            except Exception as e:                      # one kit model that won't read never hides the mount
+                out["problems"].append(f"state kit model {s.get('model')}: {type(e).__name__}: {e}")
         return out
 
     def body(self, race: str, sex: int) -> dict:
@@ -760,10 +770,9 @@ class Workbench:
                      # a cloak paints the body's cape geosets (M2 texture type 2) with its material
                      "cape": idx.texture(row["materials"][0], item_race, sex) if slot == 16 and row["materials"][0] else 0,
                      "particle": idx.particle.get(display)}       # its emitters' colours (slots 11-13)
-            for m in idx.models(display, item_race, sex):
-                if m["type"] == M.ATTACHED:
-                    m = m | {"attach": CH.SHOULDER_POINTS.get(m["position"], 6) if slot == 3
-                             else CH.ATTACH_POINTS.get(slot, -1)}
+            for m in idx.models(display, item_race, sex, slot):
+                if m["type"] == M.ATTACHED and m["attach"] < 0:     # a held item: its hand or back
+                    m = m | {"attach": CH.ATTACH_POINTS.get(slot, -1)}
                 try:
                     piece["models"].append(m | {"mesh": self.mesh(key, m["fdid"], m["textures"])})
                 except Exception as e:
@@ -1005,7 +1014,7 @@ def make_handler(wb: Workbench):
                 return self._send(wb.image("textures", parts[2], int(parts[3][:-4])), "image/png", cache=True)
             if path == "/api/preview":
                 return self._json(wb.preview(q.get("source", "") or next(iter(wb.catalogs), ""), _int(q.get("display")) or 0,
-                                             q.get("race", "hu"), _int(q.get("sex")) or 0))
+                                             q.get("race", "hu"), _int(q.get("sex")) or 0, _int(q.get("slot")) or 0))
             if path == "/api/races":
                 return self._json(wb.races())
             if path == "/api/body":

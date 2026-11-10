@@ -1,10 +1,12 @@
 """3D previews: item displays and character bodies as meshes the page's viewer draws and animates.
 
-An ItemDisplayInfo names up to two model resources and their material resources, each with a
-``ModelType``: -1 none, 0 a model attached at a body point (a helm on the head, shoulders, a belt
-buckle), 1 a *collection* - a piece skinned to the body itself, its parts numbered by the body's
-geoset groups (401 hands, 501 feet, 1801 belt, 2201 torso...), each drawn only where the body
-shows that same geoset. A model resource is one or more ModelFileData files - several when the
+An ItemDisplayInfo names up to two model resources and their material resources. Each model is
+attached at a body point (a helm on the head, shoulders, a belt buckle) or is a *collection* - a
+piece skinned to the body itself, its parts numbered by the body's geoset groups (401 hands, 501
+feet, 1801 belt, 2201 torso...), each drawn only where the body shows that same geoset. Which, the
+x64 client decides as RetailItemIndex.cpp's Attach does (``placement``): by the file's folder
+(objectcomponents\\collection(s)\\), the slot and ``ModelType`` - a belt's race-and-sex collection is
+skinned whatever its ModelType says. A model resource is one or more ModelFileData files - several when the
 model differs by race and sex (helms) or side (shoulders, ComponentModelFileData.PositionIndex);
 a material resource is TextureFileData files, by race and sex where they differ
 (ComponentTextureFileData), with ChrRaces' model and texture fallbacks (a Nightborne wears the
@@ -13,8 +15,9 @@ Night Elf's). Armour drawn on the body is ItemDisplayInfoMaterialRes: a texture 
 The resolution tables are read once per build and kept on disk (``displays-<source>-<build>``).
 A mesh is the model in its bind pose - positions, normals, UVs, triangles, per batch its geoset,
 textures, blend mode and material flags - with its bones, vertex weights, attachment points and the
-Stand animation's keyframes (from the model, its ``.skel`` or an ``.anim``), for the viewer to play.
-Ribbons are left out.
+Stand animation's keyframes (from the model, its ``.skel`` or an ``.anim``), its particle emitters and
+ribbons, and its physics (``physics``: what the client swings, the viewer hangs at rest), for the viewer
+to play.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import struct
 import threading
 from collections import defaultdict
 
-INDEX_VERSION = 5
+INDEX_VERSION = 6
 TABLES = ("ItemDisplayInfo", "ModelFileData", "ComponentModelFileData", "TextureFileData",
           "ComponentTextureFileData", "ItemDisplayInfoMaterialRes", "ItemDisplayInfoModelMatRes",
           "HelmetGeosetData", "ChrRaces", "ParticleColor")
@@ -37,6 +40,11 @@ SECTIONS = {0: "Upper arm", 1: "Lower arm", 2: "Hand", 3: "Upper torso", 4: "Low
 VERTEX = 48                       # M2 vertex: position 12, bone weights 4, bone indices 4, normal 12, uv 8, uv2 8
 ITEM_TEXTURE, ITEM_TEXTURE_2 = 2, 3   # M2 texture types: the display's own textures ("object skin" 1 and 2)
 ATTACHED, COLLECTION = 0, 1       # ItemDisplayInfo.ModelType
+# where the x64 client hangs a display's model that isn't a collection, by inventory type: (its first
+# model, its second) - RetailItemIndex.cpp's Attach; a helm's second model on the head's top (55)
+ITEM_POINTS = {1: (11, 55), 3: (6, 5), 4: (34, 34), 5: (34, 34), 19: (34, 34), 20: (34, 34), 6: (53, 53),
+               7: (9, 10), 8: (47, 48), 9: (3, 4), 10: (1, 2), 16: (12, 12)}
+COLLECTION_FOLDERS = ("item\\objectcomponents\\collection\\", "item\\objectcomponents\\collections\\")
 SEQ_ALIAS = 0x40
 QUAT16 = 32767.0
 
@@ -65,6 +73,10 @@ class DisplayIndex:
         # display -> its ParticleColor row's nine colours (start, middle, end of colour slots 11-13, ARGB)
         self.particle = {int(k): v for k, v in d.get("particle", {}).items()}
         self.visual = {int(k): v for k, v in d.get("visual", {}).items()}       # display -> its ItemVisual (a glow)
+        # the model files the listfile puts in a collection folder; None without a listfile (then
+        # ModelType 1 alone says collection)
+        cf = d.get("collection_files")
+        self.collection_files = set(cf) if cf is not None else None
 
     @classmethod
     def build(cls, src, log=lambda m: None) -> "DisplayIndex":
@@ -113,13 +125,20 @@ class DisplayIndex:
                 "MaleModelFallbackRaceID", "MaleModelFallbackSex", "FemaleModelFallbackRaceID", "FemaleModelFallbackSex",
                 "MaleTextureFallbackRaceID", "MaleTextureFallbackSex", "FemaleTextureFallbackRaceID",
                 "FemaleTextureFallbackSex")]
+        listfile = getattr(src, "listfile", "") or ""
+        if os.path.isfile(listfile):
+            from .retailpack import listfile_names
+            log(f"{src.spec.label}: reading the listfile for the item models' folders")
+            names = listfile_names(listfile, {f for files in d["model_files"].values() for f in files})
+            d["collection_files"] = sorted(f for f, n in names.items() if any(m in n for m in COLLECTION_FOLDERS))
         return cls(d)
 
     def to_json(self) -> dict:
         return {"displays": self.displays, "model_files": self.model_files, "comp_models": self.comp_models,
                 "tex_files": self.tex_files, "comp_tex": self.comp_tex, "sections": self.sections,
                 "model_mat": self.model_mat, "helmet_hides": self.helmet_hides, "fallbacks": self.fallbacks,
-                "prefixes": self.prefixes, "particle": self.particle, "visual": self.visual}
+                "prefixes": self.prefixes, "particle": self.particle, "visual": self.visual,
+                "collection_files": sorted(self.collection_files) if self.collection_files is not None else None}
 
     # -- resolution ---------------------------------------------------------------
     def _fallback(self, race: int, sex: int, textures: bool) -> tuple[int, int] | None:
@@ -164,8 +183,36 @@ class DisplayIndex:
         return {"model_resources": r[0:2], "materials": r[2:4], "model_types": r[4:6], "geoset_groups": r[6:12],
                 "attachment_geosets": r[12:18], "helmet_vis": r[18:20], "geoset_override": r[20] if len(r) > 20 else 0}
 
-    def models(self, display: int, race: int, sex: int, _depth: int = 0) -> list[dict]:
-        """The display's models for that race and sex: [{fdid, slot (0/1), position, type, textures {type: fdid}}]."""
+    def placement(self, fdid: int, inv: int, column: int, model_type: int, position: int = -1) -> tuple[bool, int]:
+        """Where the x64 client puts a display's model (RetailItemIndex.cpp's Attach): (skinned to the
+        body - a collection, the attachment point it's hung on otherwise - -1 when ``inv`` doesn't say:
+        a held item's). ``inv``: the item's inventory type (0 unknown: a collection by its folder alone);
+        ``column``: the display's model 0 or 1. A collection is a file in objectcomponents\\collection(s)\\
+        - a helm's only when its ModelType says 1 too, a belt's when ModelType 1 or made by race and sex
+        (one made for the waist point is hung there), a cloak's by ModelType alone; shoulders are hung."""
+        comp = self.comp_models.get(fdid)
+        folder = (model_type == COLLECTION) if self.collection_files is None else fdid in self.collection_files
+        by_race = comp is not None and (comp[0] != 0 or comp[1] in (0, 1))
+        if inv == 3:
+            skinned = False
+        elif inv == 1:
+            skinned = folder and model_type == COLLECTION
+        elif inv == 6:
+            skinned = folder and (model_type == COLLECTION or by_race)
+        elif inv == 16:
+            skinned = model_type == COLLECTION
+        else:
+            skinned = folder
+        if skinned:
+            return True, -1
+        if inv == 3 and position in (0, 1):
+            return False, ITEM_POINTS[3][position]         # a shoulder by its side: 0 left, 1 right
+        return False, ITEM_POINTS.get(inv, (-1, -1))[1 if column else 0]
+
+    def models(self, display: int, race: int, sex: int, inv: int = 0, _depth: int = 0) -> list[dict]:
+        """The display's models for that race and sex: [{fdid, slot (0/1), position, type, attach, textures
+        {type: fdid}}] - ``type`` COLLECTION (skinned to the body) or ATTACHED at ``attach`` (-1: a point
+        ``inv``, the item's inventory type, doesn't say: a held item's), as ``placement`` puts them."""
         row = self.displays.get(display)
         if not row:
             return []
@@ -189,12 +236,14 @@ class DisplayIndex:
                 cands = [f for f in files if (self.comp_models.get(f) or [0, 0, 0, -1])[3] == pos]
                 scored = sorted(((self._fit(self.comp_models.get(f), race, sex), f) for f in cands), reverse=True)
                 if scored and scored[0][0] >= 0:
-                    out.append({"fdid": scored[0][1], "slot": k, "position": pos,
-                                "type": COLLECTION if mtype == COLLECTION else ATTACHED, "textures": textures})
+                    fdid = scored[0][1]
+                    skinned, point = self.placement(fdid, inv, k, mtype, pos)
+                    out.append({"fdid": fdid, "slot": k, "position": pos, "type": COLLECTION if skinned else ATTACHED,
+                                "attach": point, "textures": textures})
         if wanted and not out and _depth < 3:          # nothing for this race: its fallback race's (Nightborne: Night Elf)
             fb = self._fallback(race, sex, textures=False)
             if fb:
-                return self.models(display, fb[0], fb[1], _depth + 1)
+                return self.models(display, fb[0], fb[1], inv, _depth + 1)
         return out
 
     def model_races(self, display: int) -> list[int]:
@@ -253,10 +302,13 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def stand_index(sequences: list[dict]) -> int | None:
-    """The sequence the Stand animation (id 0, first variation) plays, through any alias."""
+def stand_index(sequences: list[dict], anim: int = 0) -> int | None:
+    """The sequence an animation (0: Stand; its first variation) plays, through any alias - Stand's when
+    the model hasn't that one."""
+    if anim and not any(s.get("id") == anim for s in sequences):
+        anim = 0
     for k, s in enumerate(sequences):
-        if s.get("id") == 0 and s.get("variation_index", 0) == 0:
+        if s.get("id") == anim and s.get("variation_index", 0) == 0:
             seen = set()
             while s.get("flags", 0) & SEQ_ALIAS and s.get("alias_next", k) < len(sequences) and k not in seen:
                 seen.add(k)
@@ -344,9 +396,21 @@ def _part(pt, scale: float = 1.0) -> dict | None:
     return {"t": [round(t / QUAT16, 5) for t in pt.times], "v": flat}
 
 
+def _texture_fdid(m, textures: dict[int, int], ti: int) -> int:
+    """The FileDataID of the model's texture ``ti``: its own, or the replaceable one of its type."""
+    tex = m.textures[ti] if 0 <= ti < len(m.textures) else None
+    if tex is None:
+        return 0
+    return (m.texture_file_ids[ti] if ti < len(m.texture_file_ids) else 0) if tex["type"] == 0 else textures.get(tex["type"], 0)
+
+
+MULTI_TEXTURE = 0x10000000          # a particle emitter of three textures (packed 5 bits each in its texture)
+
+
 def model_anims(m, seq, ext, textures: dict[int, int]) -> dict:
     """What a model animates besides its bones: texture transforms (scrolling, turning UVs), colours,
-    transparency, and its particle emitters (with each one's texture)."""
+    transparency, its particle emitters (with each one's texture - three for a multi-texture one) and its
+    ribbons."""
     def tr(track):
         return _track(track, seq, ext, track.kind) if seq is not None and track is not None else None
     uv = [{"t": tr(t.get("translation")), "r": tr(t.get("rotation")), "s": tr(t.get("scaling"))}
@@ -355,19 +419,21 @@ def model_anims(m, seq, ext, textures: dict[int, int]) -> dict:
     weights = [tr(w.get("weight")) for w in m.texture_weights]
     particles = []
     for pe in m.particles:
-        ti = pe.get("texture", 0)
-        if ti >= len(m.textures):
-            ti &= 0x1F                                   # several textures packed 5 bits each: the first
-        tex = m.textures[ti] if ti < len(m.textures) else None
-        if tex is None:
-            continue
-        tfd = (m.texture_file_ids[ti] if ti < len(m.texture_file_ids) else 0) if tex["type"] == 0 else \
-            textures.get(tex["type"], 0)
-        if not tfd:
+        packed, flags = pe.get("texture", 0), pe["flags"]
+        if flags & MULTI_TEXTURE:
+            fdids = [_texture_fdid(m, textures, (packed >> (5 * k)) & 0x1F) for k in range(3)]
+        else:
+            fdids = [_texture_fdid(m, textures, packed if packed < len(m.textures) else packed & 0x1F)]
+        if not fdids[0]:
             continue
         particles.append({
-            "bone": pe["bone"], "pos": [round(c, 5) for c in pe["position"]], "flags": pe["flags"],
-            "type": pe["emitter_type"], "blend": pe["blending_type"], "texture": tfd,
+            "bone": pe["bone"], "pos": [round(c, 5) for c in pe["position"]], "flags": flags,
+            "type": pe["emitter_type"], "blend": pe["blending_type"], "texture": fdids[0],
+            # a multi-texture emitter's other two, and how their coordinates run (WebWowViewerCpp's
+            # BuildQuadT3: the cell's size in each, then a start and a scroll each particle takes)
+            "textures": fdids[1:] if flags & MULTI_TEXTURE else [],
+            "multi": [list(pe.get("multi_texture_param_x") or (32, 32)), list(pe.get("multi_texture_param0") or (0,) * 4),
+                      list(pe.get("multi_texture_param1") or (0,) * 4)] if flags & MULTI_TEXTURE else None,
             # 11-13: its colours come from the display's ParticleColor row, as the client gives them
             "color_index": pe.get("particle_color_index", 0),
             "rows": max(1, pe.get("texture_dimensions_rows") or 1), "cols": max(1, pe.get("texture_dimensions_columns") or 1),
@@ -376,19 +442,42 @@ def model_anims(m, seq, ext, textures: dict[int, int]) -> dict:
             "gravity": tr(pe.get("gravity")), "life": tr(pe.get("lifespan")), "life_var": pe.get("lifespan_vary", 0),
             "rate": tr(pe.get("emission_rate")), "rate_var": pe.get("emission_rate_vary", 0),
             "length": tr(pe.get("emission_area_length")), "width": tr(pe.get("emission_area_width")),
-            "enabled": tr(pe.get("enabled_in")),
+            "z_source": tr(pe.get("z_source")), "enabled": tr(pe.get("enabled_in")),
             "color": _part(pe.get("color_track"), 1 / 255.0), "alpha": _part(pe.get("alpha_track"), 1 / QUAT16),
             "scale": _part(pe.get("scale_track")), "scale_var": list(pe.get("scale_vary") or (0, 0)),
-            "cells": _part(pe.get("head_cell_track")), "drag": pe.get("drag", 0),
+            "cells": _part(pe.get("head_cell_track")), "tail_cells": _part(pe.get("tail_cell_track")),
+            "tail_length": pe.get("tail_length", 0), "drag": pe.get("drag", 0),
             "spin": pe.get("spin", 0), "spin_var": pe.get("spin_vary", 0),
             "base_spin": pe.get("base_spin", 0), "base_spin_var": pe.get("base_spin_vary", 0),
             "twinkle": [pe.get("twinkle_speed", 0), pe.get("twinkle_percent", 1), *list(pe.get("twinkle_scale") or (1, 1))],
+            "wind": [round(c, 5) for c in pe.get("wind_vector") or (0, 0, 0)],
+            "spline": [[round(c, 5) for c in p] for p in pe.get("spline_points") or []],
         })
-    return {"uvanims": uv, "colors": colors, "weights": weights, "particles": particles}
+    ribbons = []
+    for r in m.ribbons:
+        mats = [m.materials[i] if i < len(m.materials) else {"flags": 0, "blending_mode": 2} for i in r.get("material_indices") or []]
+        fdids = [_texture_fdid(m, textures, i) for i in r.get("texture_indices") or []]
+        layers = [{"texture": f, "blend": mt["blending_mode"], "mflags": mt["flags"]} for f, mt in zip(fdids, mats) if f]
+        if not layers:
+            continue
+        # its texture animation: an index into the model's lookup where the model's flag 0x20000 says so
+        # (WebWowViewerCpp's m2Object), else none
+        lookup = r.get("texture_transform_lookup_index", 0) if m.global_flags & 0x20000 else -1
+        ribbons.append({
+            "bone": r["bone_index"], "pos": [round(c, 5) for c in r["position"]], "layers": layers,
+            "color": tr(r.get("color_track")), "alpha": tr(r.get("alpha_track")),
+            "above": tr(r.get("height_above_track")), "below": tr(r.get("height_below_track")),
+            "edges": r.get("edges_per_second", 0), "life": r.get("edge_lifetime", 0), "gravity": r.get("gravity", 0),
+            "rows": max(1, r.get("texture_rows") or 1), "cols": max(1, r.get("texture_cols") or 1),
+            "slot": tr(r.get("tex_slot_track")), "visible": tr(r.get("visibility_track")),
+            "priority": r.get("priority_plane", 0),
+            "uvanim": _lookup(m.texture_transform_combos, lookup) if lookup >= 0 else -1,
+        })
+    return {"uvanims": uv, "colors": colors, "weights": weights, "particles": particles, "ribbons": ribbons}
 
 
-def skeleton(read, m) -> dict:
-    """The model's bones (its own, or its ``.skel``'s) with the Stand animation's keyframes."""
+def skeleton(read, m, anim: int = 0) -> dict:
+    """The model's bones (its own, or its ``.skel``'s) with an animation's keyframes (Stand's, or ``anim``'s)."""
     bones, attachments, sequences, refs, loops, chunk = m.bones, m.attachments, m.sequences, m.anim_file_ids, \
         m.global_loops, "AFM2"
     skel_id = getattr(m, "skeleton_file_id", 0)
@@ -407,14 +496,14 @@ def skeleton(read, m) -> dict:
         if sk is not None and sk.bones:
             bones, sequences, refs, chunk = sk.bones, sk.sequences or sequences, sk.anim_file_ids or refs, "AFSB"
             attachments, loops = sk.attachments or attachments, sk.global_loops or loops
-    seq = stand_index(sequences)
+    seq = stand_index(sequences, anim)
     ext = ext_model = None
     if seq is not None:
         s = sequences[seq]
         if not s.get("flags", 0) & 0x20:                   # its keyframes live in an .anim
             ext = _anim_file(read, refs, s["id"], s.get("variation_index", 0), chunk)
             ext_model = ext if chunk == "AFM2" else _anim_file(read, refs, s["id"], s.get("variation_index", 0), "AFM2")
-    m_seq = stand_index(m.sequences) if m.sequences else seq
+    m_seq = stand_index(m.sequences, anim) if m.sequences else seq
     out = []
     for b in bones:
         e = {"p": b["parent_bone"], "v": [round(c, 5) for c in b["pivot"]], "c": b.get("bone_name_crc", 0),
@@ -425,17 +514,27 @@ def skeleton(read, m) -> dict:
                 if tr:
                     e[key] = tr
         out.append(e)
+    # the sequence's bounds (its reach as far as it moves): a gradient's height runs up them, as the client's
+    reach = None
+    if seq is not None and "bounds_min" in sequences[seq]:
+        lo, hi = sequences[seq]["bounds_min"], sequences[seq]["bounds_max"]
+        if hi[2] > lo[2]:
+            reach = [[round(c, 5) for c in lo], [round(c, 5) for c in hi]]
     return {"bones": out, "duration": sequences[seq]["duration"] if seq is not None else 0, "globals": list(loops),
             "attachments": [[a["id"], a["bone"], *[round(c, 5) for c in a["position"]]] for a in attachments],
-            "_model_seq": m_seq, "_model_ext": ext_model}
+            "reach": reach, "_model_seq": m_seq, "_model_ext": ext_model}
 
 
-def mesh(read, fdid: int, textures: dict[int, int], animate: bool = True) -> dict:
-    """A model (FileDataID) as the viewer's mesh, with its skeleton and Stand animation.
+def mesh(read, fdid: int, textures: dict[int, int], animate: bool = True, anim: int = 0) -> dict:
+    """A model (FileDataID) as the viewer's mesh, with its skeleton, its Stand animation (or ``anim``'s)
+    and its physics (``physics.read``: the viewer hangs what the client swings).
     ``read(fdid) -> bytes``; ``textures``: M2 texture type -> FileDataID for the replaceable ones."""
     from wotlkconv.m2.model import parse_m2
     from wotlkconv.m2.skin import parse_skin
-    m = parse_m2(read(fdid), f"model {fdid}")
+
+    from . import physics
+    raw = read(fdid)
+    m = parse_m2(raw, f"model {fdid}")
     if not m.skin_file_ids:
         raise ModelError(f"model {fdid} names no skin file")
     skin = parse_skin(read(m.skin_file_ids[0]), f"skin {m.skin_file_ids[0]}")
@@ -483,13 +582,22 @@ def mesh(read, fdid: int, textures: dict[int, int], animate: bool = True) -> dic
            "batches": batches, "bounds": [lo, hi]}
     if animate:
         try:
-            sk = skeleton(read, m)
+            sk = skeleton(read, m, anim)
             seq, ext = sk.pop("_model_seq"), sk.pop("_model_ext")
             out.update(sk)
             out.update(model_anims(m, seq, ext, textures))
         except Exception as e:                             # a model we can't animate still shows in its bind pose
             out.update({"bones": [], "duration": 0, "globals": [], "attachments": [], "uvanims": [], "colors": [],
-                        "weights": [], "particles": [], "anim_problem": f"{type(e).__name__}: {e}"})
+                        "weights": [], "particles": [], "ribbons": [], "anim_problem": f"{type(e).__name__}: {e}"})
+        try:
+            data = physics.chunk(raw, "PFDC")
+            if data is None and getattr(m, "phys_file_id", 0):
+                data = read(m.phys_file_id)
+            phys = physics.read(data) if data else None
+            if phys and out["bones"]:
+                out["phys"] = phys
+        except Exception:                                  # physics that won't read: the model as modelled
+            pass
     return out
 
 

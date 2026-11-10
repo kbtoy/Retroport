@@ -112,7 +112,25 @@ install fetches what it doesn't store from Blizzard's CDN, verified and kept in 
   canvas has no alpha: what a see-through batch left in it let the page show through the model
   (Valeguard Vestments' flaps flickering as the model turned). An emitter of colour slot 11-13
   takes the display's ParticleColor row (`DisplayIndex.particle`, a mount's from its catalog
-  display), as the client's `ReplaceParticleColor` gives it. A display's retail glows hang on its
+  display), as the client's `ReplaceParticleColor` gives it. Particles follow WebWowViewerCpp's
+  reading of the client (`ParticleEmitter`, its generators): an emitter's frame is its bone's at its
+  position turned a quarter about Z; particles start on a plane, a sphere (its angle from the ground
+  plane) or along a spline (a candle's wick), live in the world or with flag 0x10 in that frame (a
+  flame stays on its wick as the model moves), take the frame's scale with 0x20, lie flat in its XY
+  plane with 0x1000 or along their flight with 0x4, draw a head (0x20000) and a streak (0x40000),
+  twinkle, spin in radians a second, and a multi-texture emitter (0x10000000: three textures packed 5
+  bits each) multiplies its three, the second and third scrolling (the Helmet of the Highlord's eyes:
+  drawn by its first texture alone they were one blob); a refraction emitter isn't drawn. Ribbons
+  (`CRibbonEmitter`'s way): an edge across the bone's Y at the emitter laid down at its rate as it
+  moves, living its lifetime and sinking by its gravity, the texture along them from the newest,
+  drawn by each of its materials (an opaque one by alpha). What the client swings with physics
+  (`physics.py` reads the model's `.phys` - its PFDC chunk or PFID - as the client's PhysicsFile.cpp)
+  hangs as it rests: the viewer turns each dynamic body, with what it carries, about its joint so
+  their weight hangs as low as the joint lets it (a shoulder's swing cone and twist, a revolute's
+  hinge; a weld, a prismatic or a spring to the rest pose holds), gravity the world's down in the
+  part's place, again when that place turns (the Astral Gladiator's Plate Helm's plumes, Malignant
+  Vision's Headguard's tentacle - modelled sticking out, hung in the game); the framing takes the
+  hung pose. A display's retail glows hang on its
   models' attachment points (`Workbench.display_glows`: `glows.placements` over ItemVisuals and
   ItemVisualsXEffect - what the client draws; the weapon type from the display's first catalog
   item), each its own animated model, scaled, left out of the framing. A version a player can't
@@ -133,9 +151,15 @@ install fetches what it doesn't store from Blizzard's CDN, verified and kept in 
   hair, then each piece's GeosetGroup values (a value the BfA body has no geoset for - retail has
   more boot shapes - takes the nearest below; retail's boots say -1, no feet, where its newer
   bodies' boots cover them, and BfA's body keeps its feet for the boot's foot texture, as BfA's own
-  data has those boots), what a helm hides (HelmetGeosetData). ModelType 0
-  models hang on body points (helm 11, shoulders 6/5, buckle 53...); ModelType 1 *collections* are
-  skinned to the body's bones by bone name hash - one collection is shared by many items, and each
+  data has those boots), what a helm hides (HelmetGeosetData). Which models hang on body points and
+  which are *collections* skinned to the body's bones (by bone name hash) is the x64 client's call
+  (`DisplayIndex.placement`, RetailItemIndex.cpp's `Attach`): a collection is a file the listfile puts
+  in objectcomponents\collection(s)\ (`DisplayIndex.collection_files`, read when the index is built) -
+  a helm's only when ModelType says 1 too, a belt's when ModelType 1 or made by race and sex (its
+  flaps: ModelType says 0 on 11,500 retail collections; hung on the buckle point they floated off a
+  Kul Tiran), a cloak's by ModelType 1 alone, shoulders never - and the rest hang where the client
+  hangs them (helm 11 and a second model 55, shoulders 6/5 by side, chest 34, buckle 53, legs 9/10,
+  feet 47/48, wrists 3/4, hands 1/2, cloak 12; held items in hand). One collection is shared by many items, and each
   shows only the parts of the body groups its slot controls (at 1 + its AttachmentGeosetGroup
   value). A model of its own (a helm, shoulders) shows its slot's groups at 1 + the higher of its
   AttachmentGeosetGroup and the display's GeosetGroupOverride - the Heroic and Mythic tier looks'
@@ -307,8 +331,16 @@ and its CreatureSoundData row (CreatureDisplayInfo.SoundID, else its model's). `
 (`race.sounds.CSD_KIT_COLUMNS`) and its SoundFootstepID, each footstep's FootstepTerrainLookup rows
 (terrain, kit, splash kit), each kit's SoundKit values and SoundKitEntry files (FileDataID,
 frequency). The page's preview draws the model with textures 11/12/13 and a fourth on type 5 (as
-the client's skin table puts it), the geosets the packed data shows, and its emitters of colour slot
-11-13 in the display's particle colours.
+the client's skin table puts it), the geosets the packed data shows, its emitters of colour slot
+11-13 in the display's particle colours, and its state kit as the x64 client draws it
+(DisplayStates.cpp): the kit's models at their points (255, none, is the base 19 - the root where the
+mount hasn't one), each placed as `EnchantModelTimeline`'s Placement does (scale, roll, pitch, the yaw
+backwards, the offset with Y turned round), faded by its alpha and playing its animation; its
+gradient in place of each batch's combiner (Gradient.ps.hlsl: the lit texel's luminance on the
+three-colour ramp, a fresnel rim to the edge colour, the alpha faded up the model's reach - the
+sequence's bounds - opaque and alpha-keyed batches blended by alpha); else its dissolve, the blend
+style alone (flag 0x2000, as the client: Dissolve.ps.hlsl - the three layers projected over the model,
+scaled and scrolling, ModX, the value at its end, a fresnel tint).
 
 **Families** (`mounts.model_families`, worked out when the catalog loads - nothing cached): the
 mounts whose first display has one model, rooted at the oldest (lowest Mount id); a mount with no

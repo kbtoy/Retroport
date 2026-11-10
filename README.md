@@ -22,7 +22,10 @@ any 3.3.5a client through the retail backport kit.
   own, a set dressed on a character of any race your client plays (male or female), weapons and
   other one-kind sets one at a time with ◀ ▶. Every version is a click away under the preview. The
   preview draws each piece by the client's own rules: which sides of a surface show, how its glows
-  add up, its particles' colours, and the retail glow models the client hangs on an item. Only
+  add up, its particles and ribbon trails, the retail glow models the client hangs on an item, which
+  pieces are skinned to the body (a belt's flaps) and which hang on it, and what the client swings
+  with physics hanging as it rests (a helm's plumes, a tentacle). A mount shows its state kit: a war
+  mount's banner, a spectral mount's ghostly shading, a Void-Scarred mount's scrolling void. Only
   versions a player can wear are listed: retail's locked "VFX unlock" looks and Blizzard's internal
   "[DNT]" sets are left out.
 - **Mounts** - all of retail's mounts (about 1,700), ground and flying, each in 3D with its looks;
