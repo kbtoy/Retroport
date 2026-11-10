@@ -281,7 +281,7 @@ class FakeSource:
                                      (2, {"MountTypeID": 230, "MountCapabilityID": 227})],
             "MountCapability": [(455, {"Flags": 7}), (227, {"Flags": 29})],
             "CreatureDisplayInfo": [(25836, {"ModelID": 2858, "CreatureModelScale": 1.0, "CreatureModelAlpha": 255,
-                                             "TextureVariationFileDataID": [234596, 0, 0, 0]}),
+                                             "TextureVariationFileDataID": [234596, 0, 0, 0], "ParticleColorID": 2470}),
                                     (2404, {"ModelID": 216, "CreatureModelScale": 1.0,
                                             "TextureVariationFileDataID": [125622, 0, 0, 0]})],
             "CreatureModelData": [(2858, {"FileDataID": 234564, "ModelScale": 1.0, "MountHeight": 2.9,
@@ -292,6 +292,8 @@ class FakeSource:
             "ItemEffect": [(5, {"TriggerType": 6, "SpellID": 60025})],
             "ItemXItemEffect": [(1, {"ItemEffectID": 5, "ItemID": 44178})],
             "ItemSearchName": [(44178, {"Display_lang": "Reins of the Albino Drake", "OverallQualityID": 4})],
+            "ParticleColor": [(2470, {"Start": [-601850, -100607, -16777216], "MID": [-1012736, -3462648, -16777216],
+                                      "End": [-7077120, -12442853, -16777216]})],
             **SOUNDS,
         }
 
@@ -458,6 +460,64 @@ def test_a_fourth_skin_ships_with_the_x64_clients_table(tmp_path):
     cdi = DBCFile.from_bytes(built.tables["CreatureDisplayInfo"])
     row = cdi.find_by_id(r.id)
     assert [cdi.get_string(row[6 + i]) for i in range(3)] == ["drakeskinwhite1", "", ""]   # the DBC keeps three
+
+
+CORMAERA = [x & 0xFFFFFFFF for x in (-601850, -100607, -16777216, -1012736, -3462648, -16777216,
+                                      -7077120, -12442853, -16777216)]      # retail's row 2470, unsigned
+
+
+def _colors(*rows) -> bytes:
+    """A client's ParticleColor.dbc: a stock row (281: black, then magenta) and ``rows``."""
+    pc = DBCFile(MT.PARTICLE_FIELDS)
+    for row in ([281] + [0xFF000000, 0xFFFF00FF, 0xFFFF00FF] * 3, *rows):
+        pc.add_record(list(row))
+    return pc.to_bytes()
+
+
+def test_a_mounts_particle_colours_are_retails_row_under_its_own_id():
+    assert MT.particle_colors_of({"Start": [-1, 0, 1], "MID": [2, 3, 4], "End": [-16777216, 5, 6]}) == \
+        [0xFFFFFFFF, 0, 1, 2, 3, 4, 0xFF000000, 5, 6]
+    assert MT.particle_colors_of({"Start": [1, 2], "MID": [], "End": []}) is None
+    earlier = [MT.ID_BASE + 1] + [7] * 9                                   # the horse's, from an earlier install
+    base = _tables() | {MT.PARTICLE_TABLE: _colors(earlier)}
+    rides = [_ride(particle=CORMAERA), _ride(mount=6, name="Brown Horse", kind="ground", id=MT.ID_BASE + 1,
+                                             item=MT.ITEM_BASE + 1)]
+    out = MT.client_tables(base, rides, {}, owned={MT.PARTICLE_TABLE: {MT.ID_BASE + 1}})
+    pc = DBCFile.from_bytes(out[MT.PARTICLE_TABLE])
+    assert pc.find_by_id(MT.ID_BASE) == [MT.ID_BASE, *CORMAERA] and pc.find_by_id(281) is not None
+    assert pc.find_by_id(MT.ID_BASE + 1) is None                          # it has none now: the row goes
+    cdi = DBCFile.from_bytes(out["CreatureDisplayInfo"])
+    assert cdi.find_by_id(MT.ID_BASE)[13] == MT.ID_BASE and cdi.find_by_id(MT.ID_BASE + 1)[13] == 0
+    again = MT.client_tables(out, rides, {})                               # an install over it: once
+    assert DBCFile.from_bytes(again[MT.PARTICLE_TABLE]).records == pc.records
+    with pytest.raises(ValueError, match="ParticleColor"):                # colours with no table to put them in
+        MT.client_tables(_tables(), rides, {})
+
+
+def test_the_catalog_keeps_a_displays_particle_colours(tmp_path):
+    cat = MT.load_catalog(FakeSource(tmp_path))
+    assert cat.displays[25836]["particle"] == CORMAERA and cat.displays[2404]["particle"] is None
+
+
+def test_a_mounts_particle_colours_go_in_its_patch(tmp_path):
+    src, lf, cat, entries = _setup(tmp_path)
+    client = _client(tmp_path, {"patch-3.MPQ": {"DBFilesClient\\ParticleColor.dbc": _colors()}})   # under the patch
+    built = MP.build(entries, cat, src, str(client), RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
+    r = built.rides[0]
+    assert r.particle == CORMAERA
+    assert DBCFile.from_bytes(built.tables[MT.PARTICLE_TABLE]).find_by_id(r.id) == [r.id, *CORMAERA]
+    assert DBCFile.from_bytes(built.tables["CreatureDisplayInfo"]).find_by_id(r.id)[13] == r.id
+
+
+def test_an_archive_above_holding_the_particle_colours_leaves_them_out_not_the_mount(tmp_path):
+    src, lf, cat, entries = _setup(tmp_path)
+    client = _client(tmp_path, {"patch-3.MPQ": {"DBFilesClient\\ParticleColor.dbc": _colors()},
+                                "patch-Z.MPQ": {"DBFilesClient\\ParticleColor.dbc": _colors()}})
+    built = MP.build(entries, cat, src, str(client), RP.PATCH, str(tmp_path / "data"), lf, lambda m: None)
+    r = built.rides[0]
+    assert r.particle is None and MT.PARTICLE_TABLE not in built.tables
+    assert DBCFile.from_bytes(built.tables["CreatureDisplayInfo"]).find_by_id(r.id)[13] == 0
+    assert any("patch-Z.MPQ" in n and "colours" in n for n in built.notes)
 
 
 def test_a_patch_above_holding_the_tables_stops_the_build(tmp_path):
