@@ -10,6 +10,7 @@ import pytest
 from retroport.dbc import DBCFile
 from retroport.mpq import MPQ, write_archive
 from retroport.workbench import direct as DR
+from retroport.workbench import edition
 from retroport.workbench import itemstats as IS
 from retroport.workbench import jobs as J
 from retroport.workbench import retailpack as RP
@@ -169,7 +170,7 @@ class FakeRetail:
 def _client(tmp_path):
     root = tmp_path / "WotLK x64"
     (root / "Data" / "enUS").mkdir(parents=True)
-    (root / "WowClient64.exe").write_bytes(b"MZ" + RP.MERGE_MARK)   # a client that reads every path table
+    (root / edition.CLIENT_EXE).write_bytes(b"MZ" + RP.MERGE_MARK)   # a client that reads every path table
     (root / "Cache" / "WDB").mkdir(parents=True)
     write_archive(str(root / "Data" / "enUS" / "locale-enUS.MPQ"), {})
     items, displays = DBCFile(8), DBCFile(25)
@@ -275,7 +276,7 @@ def test_retail_direct_never_replaces_another_tools_patch(tmp_path, monkeypatch)
 
 def test_retail_direct_needs_the_x64_client_and_a_local_retail(tmp_path, monkeypatch):
     d = _direct(tmp_path, monkeypatch)
-    os.remove(os.path.join(d.client, "WowClient64.exe"))
+    os.remove(os.path.join(d.client, edition.CLIENT_EXE))
     d.source = types.SimpleNamespace(spec=types.SimpleNamespace(kind="wago"))
     why = d.problems()
     assert any("x64 client" in w for w in why) and any("own install" in w for w in why)
@@ -302,9 +303,9 @@ def test_the_patch_follows_what_the_client_reads(tmp_path):
     root = tmp_path / "client"
     root.mkdir()
     assert RP.patch_for(str(root)) == RP.PATCH                           # no exe to read: the current one
-    (root / "WowClient64.exe").write_bytes(b"MZ older")
+    (root / edition.CLIENT_EXE).write_bytes(b"MZ older")
     assert RP.merges_path_tables(str(root)) is False and RP.patch_for(str(root)) == RP.LEGACY_PATCH
-    (root / "WowClient64.exe").write_bytes(b"MZ newer " + RP.MERGE_MARK + b" (rows)")
+    (root / edition.CLIENT_EXE).write_bytes(b"MZ newer " + RP.MERGE_MARK + b" (rows)")
     assert RP.merges_path_tables(str(root)) is True and RP.patch_for(str(root)) == "patch-Q.MPQ"
 
 

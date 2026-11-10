@@ -62,9 +62,10 @@ _MERGES: dict[tuple, bool] = {}
 
 
 def merges_path_tables(client_dir: str) -> bool | None:
-    """Whether the client's WowClient64.exe reads every archive's path tables (``MERGE_MARK`` in it);
+    """Whether the client's program (``edition.CLIENT_EXE``) reads every archive's path tables (``MERGE_MARK`` in it);
     None without an exe to read. Kept per exe (path, size, time)."""
-    exe = os.path.join(client_dir or "", "WowClient64.exe")
+    from . import edition
+    exe = os.path.join(client_dir or "", edition.CLIENT_EXE)
     try:
         st = os.stat(exe)
     except OSError:

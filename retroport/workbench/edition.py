@@ -10,3 +10,7 @@ NAME = "Retroport Workbench x64"
 CLIENT_NAME = "the x64 client"
 CLIENT_EXE = "WowClient64.exe"           # the game's program in the client folder Install goes into
 PORT = 8335
+# in %USERPROFILE%\.retroport: its settings, and the folder with its cache, basket and installs (the
+# earlier Workbench's, so they carry over)
+SETTINGS_FILE = "workbench.json"
+DATA_FOLDER = "workbench"

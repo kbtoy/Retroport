@@ -57,7 +57,7 @@ from . import pick as P
 from . import wotlk as WK
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".retroport", "workbench.json")
+SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".retroport", edition.SETTINGS_FILE)
 PORT = edition.PORT
 
 
@@ -145,7 +145,7 @@ class Settings:
 
     @property
     def data_dir(self) -> str:
-        return self.data or os.path.join(os.path.dirname(SETTINGS_PATH), "workbench")
+        return self.data or os.path.join(os.path.dirname(SETTINGS_PATH), edition.DATA_FOLDER)
 
     def source_problem(self, spec: C.SourceSpec) -> str:
         """Why a source can't be read ("" when it can)."""

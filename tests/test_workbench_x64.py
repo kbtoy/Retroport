@@ -22,7 +22,7 @@ def test_either_client_running_counts(monkeypatch):
     def tasklist(out):
         return lambda *a, **k: types.SimpleNamespace(stdout=out)
     monkeypatch.setattr(J.os, "name", "nt")
-    monkeypatch.setattr(J.subprocess, "run", tasklist('"explorer.exe","1"\n"WowClient64.exe","2"\n'))
+    monkeypatch.setattr(J.subprocess, "run", tasklist(f'"explorer.exe","1"\n"{edition.CLIENT_EXE}","2"\n'))
     assert J.wow_running()
     monkeypatch.setattr(J.subprocess, "run", tasklist('"Wow.exe","3"\n'))
     assert J.wow_running()
