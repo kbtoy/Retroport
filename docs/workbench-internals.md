@@ -205,7 +205,10 @@ material textures (body layers, ModelMatRes) at their full paths.
 Install (`Direct.go`):
 
 1. **read** - the twelve tables from the local install (`Source.raw_table`, encrypted sections
-   zeroed), each layout checked; eight read into rows.
+   zeroed), each layout checked; eight read into rows. Then the glow tables (`glows.TABLES`: ten,
+   29 MB in 12.1.5): all of them, or none - with a warning - when one is another layout or
+   unreadable. `Direct.read_glows` walks them (`glows.index`: visual -> its models) once per
+   retail build, kept in `direct\glows-<build>.json` (the kit tables take about half a minute).
 2. **collect** - one `Piece` per (retail item, display) of the plan; its entry
    (`retailpack.entry_for`): the item id for its default look unless the client's Item.dbc has it,
    else (modifier + 1) x 1,000,000 + id, past modifier 14 numbered from 16,000,000 (`ids.json`
@@ -216,12 +219,17 @@ Install (`Direct.go`):
    FileDataID the client's path tables already have keeps that path, and isn't shipped when the
    client holds the file. Aliases: a model where the client looks for it (a sub-folder), a model's
    texture beside it (`alias_for` - one look in nine needs one; the Damned Necrolyte skull's lives
-   in collections\). A display the client's ItemDisplayInfo.dbc has is reported.
+   in collections\). A display the client's ItemDisplayInfo.dbc has is reported. A look's glows
+   (`glows.for_look`, see below) add their models, walked after the displays' own files, so a
+   file both need is the display's. A file only a glow brings, whose path holds another file of
+   the client's (3.3.5's own spell models and textures), moves under `retroport\` after its
+   first folder (`glows.relocate`). The client finds it by FileDataID, and a model's skins get a
+   copy under its new name.
 3. **pack** - `out\patch-Q.MPQ` (`retailpack.patch_for`: patch-T for a client without the path-table merge) (stored, written as it goes; an alias shares its file's block): a
    manifest (`retroport\direct.json` - Install replaces only a patch that has one), the tables,
    the path tables (the client's, read with Install's own patches set aside, plus the new rows), the files, the
-   aliases. Then `check`: every path `retailpack.lookups` says the client opens, looked for in the
-   patch and the client. And `out\view-models.txt`: each model with the textures it wears - an
+   aliases. Then `check`: every path `retailpack.lookups` says the client opens, and each glow
+   model with its skin 0, looked for in the patch and the client. And `out\view-models.txt`: each model with the textures it wears - an
    item's own (type 2) and its ItemDisplayInfoModelMatRes types (3, 4, 24: `Graph.worn`), a mount's
    skins (11, 12, 13 and a fourth's 5: `mounts.SKIN_TYPES`) - in the list the x64 client's login-screen viewer reads
    (retroport-native `tools\x64_model_view.py --list`: the build's look checked without logging in).
@@ -232,9 +240,38 @@ Install (`Direct.go`):
 5. **install** - `Data\patch-Q.MPQ` (an earlier own patch-T moved into the backup) replaced (removed first: hard links), the old one in
    `direct\backups\<time>\client\`, the record in `install.json`, Cache cleared.
 
-`out\build.json` records what was built (looks, build, client, steps, entries, a summary); the
-page calls it built while those match the basket. Retail's ItemVisual glows aren't shipped (the
-client sets them to 0 for retail rows).
+`out\build.json` records what was built (looks, build, client, steps, entries, a summary - with
+`glows`, `glow_models` and `glows_drawn`); the page calls it built while those match the basket.
+
+### Item glows
+
+How the client draws a retail display's ItemVisual (the Retail tree, read-only reference): it
+writes 0 into the native row's `m_itemVisual` (`NativeItemRows.cpp`) and asks its own graph
+(`WXL/modules/db2/items/ItemVisualGraph.cpp`). The graph is loaded at start from `itemvisuals`
+and `itemvisualsxeffect`, its kits filtered out of `spellvisualkitmodelattach`,
+`spellvisualkiteffect`, `spellproceduraleffect` and `spellvisualeffectname`, positioners from
+`positioner*` and `transformmatrix`. `EquipmentAttachments.cpp`'s `ApplyItemVisual` then hangs
+the models on every item model the client builds (weapons, shoulders, helms and the retail-only
+pieces). A 3.3.5 ItemVisuals.dbc row of the same id wins, so an enchant (SpellItemEnchantment's
+visual) is still 3.3.5's. Each model is found by FileDataID through the path tables. The routes
+(`glows.index`):
+
+- **point** - ItemVisuals.ModelFileID[0..4] at attachment points 0-4: drawn;
+- **effect** - an ItemVisualsXEffect row's AttachmentModelFileID at its AttachmentID, scaled: drawn
+  for a weapon whose subclass is the row's DisplayWeaponSubclassID. A row with -1 (any item - 577 of
+  the model rows of the visuals 12.1.5's displays use) isn't drawn: the client takes no wildcard
+  (`glows.ANY_ITEM`). A row for another
+  weapon type isn't the look's at all, and isn't shipped (`for_look`);
+- **kit** - the models of ItemVisuals.SpellVisualKitId1/2 and of an effect row's SpellVisualKitID:
+  the kit's own ModelAttach rows, plus those a type-2 KitEffect row names, each
+  SpellVisualEffectName.ModelFileDataID at the row's AttachmentID. `glows.kit_skip` mirrors the
+  client's refusals. It draws a still model only, with ModelPosition 0, and retail sets -1 on
+  47,564 of 47,710 effect names, so today it draws none (`glows.MODEL_POSITION`). Type-1 rows
+  (procedural effects) carry no model; the client's `ProceduralEnchants.cpp` reads them from the
+  shipped tables.
+
+Every model of a look's glows ships, drawn or not, so a client that learns more needs only
+itself. 12.1.5: 380 of 403 visuals have a model, 2,855 displays name one of 211.
 
 ## Mounts
 

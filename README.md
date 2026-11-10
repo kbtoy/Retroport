@@ -97,6 +97,15 @@ they were.
    looks for a file somewhere else than retail keeps it (a helm's texture kept with its set's other
    pieces), the patch has it there too; a check then looks up every file the client will open, as
    the client does. The basket's mounts go in the same patch (see [Mounts](#mounts)).
+   **Retail item glows** come too: a look whose retail display has an ItemVisual (a weapon's
+   flames, a shoulder's sparkles) gets retail's glow tables and every glow model its visual
+   attaches, with their skins and textures. The client hangs them on the item's model the way 3.3.5
+   hangs an enchant's. A glow file whose retail path holds a 3.3.5 file of the client's own goes
+   under a `retroport\` folder instead (`spells\retroport\...`), so 3.3.5's own spells and enchants
+   keep theirs. The log says how many glow models the client draws today. The client doesn't yet
+   draw an effect retail made for any item (only one made for the weapon's own type), or a spell-kit
+   model whose ModelPosition retail sets to -1 (nearly all of them). Those models go in the patch
+   anyway, so a client that learns them needs no new patch.
 3. It writes the item SQL (`retail-direct-items.sql` - a `SOURCE` line with a copy button): one
    row per look, its display retail's own, with the Stats step's numbers. An item's default look
    keeps its retail item id; its other looks get (version + 1) x 1,000,000 + the id - the Mythic

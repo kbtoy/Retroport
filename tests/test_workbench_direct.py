@@ -155,7 +155,8 @@ class FakeRetail:
                                        (12, {"ItemID": 271549, "ItemAppearanceModifierID": 0, "ItemAppearanceID": 3, "OrderIndex": 0})]}
 
     def raw_table(self, name):
-        return _wdc5(RP.TABLES[name])
+        from retroport.workbench import glows as GL
+        return _wdc5(RP.TABLES[name] if name in RP.TABLES else GL.TABLES[name])
 
     def parse(self, name, data):
         return self.rows.get(name, [])

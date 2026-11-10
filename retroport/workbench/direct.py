@@ -12,6 +12,10 @@ so Install hands it those as they are:
 * the item SQL (``<data>\\direct\\out\\sql\\retail-direct-items.sql``, yours to apply): an
   item_template row per look, its displayid retail's own ItemDisplayInfo id, its entry the retail
   item's id (``retailpack.entry_for``); the Stats step's numbers after it;
+* the looks' retail item glows (``glows``): retail's item visual tables, whole, and every model a
+  look's ItemVisual attaches, with its own files - one whose retail path holds another file of the
+  client's (3.3.5's own spell models) under a retroport\\ folder (``glows.relocate``), so 3.3.5's
+  spells and enchants keep theirs;
 * the basket's mounts (``mountpack``, route "direct"): retail's own models in their own folder and
   their sounds, the client's spell, creature and sound tables with their rows (in the same patch),
   their items' bag icons (rows in the item display table on top - an older tool's item patch,
@@ -34,6 +38,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from . import catalog as C
+from . import glows as GL
 from . import itemstats as IS
 from . import edition
 from . import jobs as J
@@ -96,6 +101,7 @@ class Files:
     dbc: dict[str, bytes] = field(default_factory=dict)       # client tables (the mounts'), "Spell" -> bytes
     rides: list = field(default_factory=list)                  # the mounts (mounts.Ride)
     made: dict[str, bytes] = field(default_factory=dict)       # files made here (the mounts' skin table), path -> bytes
+    glows: dict[int, list[int]] = field(default_factory=dict)  # display -> its glow models (FileDataIDs)
 
 
 class Direct:
@@ -270,9 +276,10 @@ class Direct:
 
         self._step("read")
         tables, rows = self.read_tables()
+        glows = self.read_glows(tables)
         passed("read")
         self._step("collect")
-        pieces, files, summary = self.collect(looks, rows)
+        pieces, files, summary = self.collect(looks, rows, glows)
         passed("collect")
         self._step("mounts")
         self.mount_built = None
@@ -356,11 +363,51 @@ class Direct:
                                  f"reads {want:08X} - this client and retail build don't go together")
             tables[name] = data
         self.say(f"   {len(tables)} tables, {sum(map(len, tables.values())) / 1048576:.1f} MB, each the layout the client reads")
+        # the item glows' tables: whole as well, or (another layout, not in this install) none of them
+        glow: dict[str, bytes] = {}
+        for name, want in GL.TABLES.items():
+            self._step("read")
+            try:
+                data = src.raw_table(name)
+            except Exception as e:
+                self.say(f"!  {name}.db2 isn't readable from retail {self.retail_build()} ({e}) - item glows left out")
+                glow = {}
+                break
+            got = RP.layout_of(data)
+            if got != want:
+                self.say(f"!  {name}.db2 of retail {self.retail_build()} has layout {got or 0:08X}; {edition.CLIENT_NAME} reads "
+                         f"{want:08X} - item glows left out")
+                glow = {}
+                break
+            glow[name] = data
+        if glow:
+            tables.update(glow)
+            self.say(f"   and the {len(glow)} tables of retail's item glows ({sum(map(len, glow.values())) / 1048576:.1f} MB)")
         rows = {table: src.parse(table, tables[file]) for table, file in DB2_NAMES.items()}
         return tables, rows
 
-    def collect(self, looks, rows) -> tuple[list[RP.Piece], Files, dict]:
-        """The pieces (the server's items), the files the patch holds, and a summary for the page."""
+    def read_glows(self, tables: dict[str, bytes]) -> dict[int, list] | None:
+        """Retail's item glows by visual (``glows.index``) - kept in ``<data>\\direct`` for the retail
+        build, as reading the kit tables takes half a minute; None without the glow tables."""
+        if not all(name in tables for name in GL.TABLES):
+            return None
+        build = self.retail_build() or "unknown"
+        path = os.path.join(self.work, f"glows-{build}.json")
+        kept = J.load_json(path) or {}
+        if kept.get("version") == GL.INDEX_VERSION and kept.get("build") == build and isinstance(kept.get("visuals"), dict):
+            return {int(v): g for v, g in kept["visuals"].items()}
+        self.say(f"   reading retail {build}'s item glows (once for this build)")
+        rows = {}
+        for name, file in GL.ROWS.items():
+            self._step("read")
+            rows[name] = self.source.parse(name, tables[file])
+        found = GL.index(rows)
+        J.save_json(path, {"version": GL.INDEX_VERSION, "build": build, "visuals": {str(v): g for v, g in found.items()}})
+        return found
+
+    def collect(self, looks, rows, glows: dict[int, list] | None = None) -> tuple[list[RP.Piece], Files, dict]:
+        """The pieces (the server's items), the files the patch holds, and a summary for the page.
+        ``glows``: retail's item glows by visual (``read_glows``; None: left out)."""
         from ..dbc import DBCFile
         from ..mpq import ClientData, MPQError
         g = RP.Graph.from_rows(rows["ItemDisplayInfo"], rows["ModelFileData"], rows["TextureFileData"],
@@ -416,22 +463,34 @@ class Direct:
             files, owner, pairs, icons, shown = {}, {}, set(), set(), set()
             profiles: dict[int, list[int]] = {}          # a model's skin profiles, by FileDataID
             queue = []
-            visuals = 0
-            for _item, display, look in looks:
+            glowing: dict[int, list[GL.Glow]] = {}       # display -> its glows
+            unlit = 0                                     # looks with a glow, the glow tables left out
+            for item, display, look in looks:
                 models, textures, own = g.files(display)
                 queue += [(f, "model", None) for f in models] + [(t, "texture", None) for t in textures]
                 shown.update(models)
                 pairs.update(own)
-                visuals += bool((g.displays.get(display) or {}).get("ItemVisual"))
+                visual = (g.displays.get(display) or {}).get("ItemVisual")
+                if visual and glows is None:
+                    unlit += 1
+                elif visual and glows.get(visual):
+                    glowing[display] = GL.for_look(glows[visual], item_rows.get(item))
                 if look.get("icon"):
                     icons.add(int(look["icon"]))
             queue += [(t, "texture", None) for t in sorted(icons)]
+            # the glows' models last (the queue is taken from its end): a file a display needs as well
+            # is the display's, where the display looks for it
+            glow_models = {gl.fdid for gls in glowing.values() for gl in gls}
+            queue[:0] = [(f, "model", None) for f in sorted(glow_models - shown)]
+            glow_side = set(glow_models - shown)          # the files only a glow brings
             unreadable = []
             while queue:
                 fdid, kind, by = queue.pop()
                 if fdid in files:
                     continue
                 files[fdid], owner[fdid] = kind, by
+                if by in glow_side:
+                    glow_side.add(fdid)
                 if kind in ("model", "skel"):
                     self._step("collect")
                     data, why = self.source.try_read(fdid)
@@ -446,10 +505,14 @@ class Direct:
             files = {f: k for f, k in files.items() if k}
             names = RP.listfile_names(self.listfile, files)
             paths = RP.place(files, owner, names, shown)
+            moved = 0
             for f in paths:                              # a file the client's tables already name stays there
                 known = base["texture" if files[f] == "texture" else "model"].get(f)
                 if known:
                     paths[f] = RP.norm(known)
+                elif f in glow_side and cd.exists(paths[f]):
+                    paths[f] = GL.relocate(paths[f])      # 3.3.5's own spell model there: its spells keep it
+                    moved += 1
             aliases = []                                 # where the client looks, when that isn't where it is
             for f, p in paths.items():
                 look = RP.model_look(p) if files[f] == "model" and p.endswith(".m2") else ""
@@ -489,15 +552,34 @@ class Direct:
             self.say(f"!  {len(unreadable)} model(s) aren't readable from your retail install - their looks miss a part:")
             for fdid, why in unreadable[:8]:
                 self.say(f"     FileDataID {fdid}: {why}")
-        if visuals:
-            self.say(f"   {visuals} look(s) have a retail item glow (ItemVisual) - {edition.CLIENT_NAME} doesn't draw those from retail yet")
+        lit = {d: [gl.fdid for gl in gls if gl.fdid in files] for d, gls in glowing.items()}
+        lit = {d: fs for d, fs in lit.items() if fs}
+        drawn = {gl.fdid for gls in glowing.values() for gl in gls if not gl.skip and gl.fdid in files}
+        if lit:
+            every = {f for fs in lit.values() for f in fs}
+            self.say(f"   {len(lit)} look(s) have a retail item glow: {len(every)} glow model(s) with their files, "
+                     f"{len(drawn)} of them drawn by {edition.CLIENT_NAME}")
+            skipped = {gl.fdid: gl.skip for gls in glowing.values() for gl in gls
+                       if gl.fdid in every and gl.fdid not in drawn}
+            why: dict[str, int] = {}
+            for reason in skipped.values():
+                why[reason] = why.get(reason, 0) + 1
+            if why:
+                self.say(f"   in the patch, not drawn yet ({edition.CLIENT_NAME} doesn't take them): " +
+                         "; ".join(f"{n} {w}" for w, n in sorted(why.items(), key=lambda t: -t[1])))
+            if moved:
+                self.say(f"   {moved} glow file(s) under a retroport\\ folder: the client has 3.3.5's own file at the retail "
+                         "path (its spells and enchants keep it)")
+        if unlit:
+            self.say(f"!  {unlit} look(s) have a retail item glow, left out: retail's glow tables aren't ones the client reads")
         unnamed = [f for f in files if f not in names and f not in have]
         if unnamed:
             self.say(f"   {len(unnamed)} file(s) the listfile doesn't name: put beside their model as wxl_<id>")
         ship = {f: paths[f] for f in files if f not in have}
         summary = {"files": len(ship), "mb": round(sum(size.values()) / 1048576, 1), "aliases": len(aliases),
-                   "unreadable": len(unreadable)}
-        return pieces, Files(ship, files, paths, aliases, base, g, [d for _i, d, _l in looks]), summary
+                   "unreadable": len(unreadable), "glows": len(lit), "glow_models": len({f for fs in lit.values() for f in fs}),
+                   "glows_drawn": len(drawn)}
+        return pieces, Files(ship, files, paths, aliases, base, g, [d for _i, d, _l in looks], glows=lit), summary
 
     def pack(self, patch: str, tables: dict, files: Files, pieces: list, record: dict) -> None:
         """The patch: what made it, the tables, the path tables (the client's with the new files'
@@ -558,6 +640,12 @@ class Direct:
                 for what, path in RP.lookups(files.graph, d, files.paths):
                     if not path or (path.lower() not in held and not cd.exists(path)):
                         bad.append((d, what, path))
+            for d, models in files.glows.items():     # a glow: its model where the path table says, skin 0 beside it
+                for f in models:
+                    path = files.paths.get(f, "")
+                    for what, want in ((f"glow model {f}", path), (f"skin 0 of glow model {f}", RP.skin_name(path, 0))):
+                        if not path or (want.lower() not in held and not cd.exists(want)):
+                            bad.append((d, what, want if path else ""))
             for r in files.rides:                    # a mount: its model, its skins beside it, its icon
                 model = r.model_path[:-4] + ".m2"
                 wanted = [("model", model), ("skin", model[:-3] + "00.skin")]
