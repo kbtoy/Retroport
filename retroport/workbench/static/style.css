@@ -334,6 +334,21 @@ canvas.viewer:active { cursor: grabbing; }
 .srow-p .meta { flex: 1; min-width: 0; }
 .srow-p .pname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
 .srow-p .sub { font-size: 11.5px; }
+/* a basket set: picked as one (its header), its pieces under it - indented, or picked one by one once broken */
+.sgroup.set { margin: 6px 0 10px; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.sgroup.set.broken { border-style: dashed; }
+.sset { display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: 6px; cursor: pointer; }
+.sset:hover { background: var(--panel-2); }
+.sset.on { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--gold); }
+.sset .meta { flex: 1; min-width: 0; }
+.sset .pname { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sset .sub { font-size: 11.5px; }
+.spieces .srow-p.inset { padding: 3px 6px 3px 18px; }
+.spieces .srow-p.inset .pname { font-size: 12px; }
+.srow-p.shared { opacity: .6; }
+.set-title { font-size: 16px; font-weight: 600; }
+.set-pieces button.chip { cursor: pointer; }
+.set-break { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .badge.warn { background: #3a2a12; color: var(--warn); }
 .stats-editor { min-width: 0; }
 .ehead { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }

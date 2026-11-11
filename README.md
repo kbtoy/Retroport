@@ -40,7 +40,9 @@ any 3.3.5a client through the retail backport kit.
   *Put back in the basket*.
 - **Give them stats** in **Stats** - every piece in the basket (to change something in your game, put
   it back in the basket from the History): item level, required level, quality, binding and armor
-  type for every piece; armor type, the role its stats are for, which classes may wear it, stats,
+  type for everything; each set in the basket its own (pick the set: its item level, role, armor type
+  and classes for all its pieces, its stats filled in together - or *Break the set* to give each piece
+  its own item level, quality and binding); armor type, the role its stats are for, which classes may wear it, stats,
   armor, weapon damage and speed, sockets and socket bonus, durability, price and *Unique* piece by
   piece - its in-game tooltip, and the piece in 3D under it, show the result as you go. *Fill in*
   uses WotLK's own rules (its stat budget for the item level and slot, split the way real WotLK

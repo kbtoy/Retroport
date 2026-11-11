@@ -174,11 +174,16 @@ install fetches what it doesn't store from Blizzard's CDN, verified and kept in 
 
 Install makes every look a cosmetic copy (any class, any race, level 1, no stats), one item per
 retail display. The Stats page (`static/stats.js`) gives each piece of the basket its game values,
-kept in `<data>/item-stats.json`: item level, required level, quality and binding are *for every
-piece* (`global`) only; armor type and the role the stats are for are for every piece unless a
-piece sets its own; classes are each piece's own; stats, armor, damage, durability and price are
-stored per piece as numbers. (An earlier version's every-piece classes, and a piece's own levels,
-quality and binding, are tidied into that when the page loads.) The piece's model is shown under its
+kept in `<data>/item-stats.json`. A value comes from the piece, else its basket set, else the basket
+(`itemstats.effective`): `global` is for everything; `groups[<basket key>]` is a basket set's own
+(item level, required level, quality, binding, armor type, the role, classes) - the page lists each
+set as one, picked to set its values and fill in its stats together; `broken` lets its pieces be
+edited one by one. Item level, required level, quality and binding are a piece's own only once its set
+is broken, or when it is in no set (`SET_FIELDS`); armor type, role and classes a piece can always
+set; stats, armor, damage, durability and price are stored per piece as numbers. A look's set is the
+first basket set holding it (`groups_of`, worked out again when Install writes the SQL): a look two
+sets share is one item in game and takes the first set's values. (An earlier version's every-piece
+classes are tidied into each piece when the page loads.) The piece's model is shown under its
 tooltip - the workbench's one viewer, which moves there from the item panel.
 
 - **Fill in** follows WotLK's rules, from `retroport/workbench/wotlk.py` - Wrath Classic's tables

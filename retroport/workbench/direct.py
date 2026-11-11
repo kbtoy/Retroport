@@ -291,7 +291,7 @@ class Direct:
         self.write_view_list(files)
         passed("pack")
         self._step("sql")
-        sql = self.write_sql(pieces)
+        sql = self.write_sql(pieces, IS.groups_of(plan))
         passed("sql")
         record["summary"] = summary | {"items": len(pieces), "sql": sql, "mounts": len(files.rides),
                                        "mounts_sql": mounts_sql}
@@ -664,7 +664,9 @@ class Direct:
             self.say("   checked: every file the client opens for these looks is where it will look")
         return len(bad)
 
-    def write_sql(self, pieces: list[RP.Piece]) -> str:
+    def write_sql(self, pieces: list[RP.Piece], groups: dict | None = None) -> str:
+        """The item SQL: each piece's row, then its stats from the Stats step (``groups``: each look's
+        basket set, ``itemstats.groups_of`` - a set's own values)."""
         ids = self._ids()
         owned = [tuple(p) for p in ids.get("owned") or []]
         path = os.path.join(self.work, "out", "sql", SQL_NAME)
@@ -677,7 +679,7 @@ class Direct:
         stats = []
         for p in pieces:
             row = dict(zip(RP.COLUMNS, p.values()))
-            stats += IS.updates(edits, {"item": {str(p.display): p.entry}}, {p.entry: row}, {})
+            stats += IS.updates(edits, {"item": {str(p.display): p.entry}}, {p.entry: row}, {}, groups=groups)
         if stats:
             text += f"\n-- Retroport Workbench, the Stats step: levels, stats, armor, damage, sockets ({len(stats)} items)\n" + \
                     "\n".join(stats) + "\n"

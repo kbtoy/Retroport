@@ -7,11 +7,16 @@
 // real WotLK items of the role split them - or copied from a WotLK item - and the tooltip shows the
 // piece as the 3.3.5 client will, its model in 3D under it. Everything is saved as it changes
 // (item-stats.json).
+//
+// Each set in the basket is one: picked, its own item level, quality, binding, armor type, role and
+// classes go to all its pieces (over the basket's, "For everything in the basket"), and its stats are
+// filled in together. Broken, each piece sets its own item level, quality and binding too, and is edited
+// alone - the set's values still its starting point (itemstats.effective: piece, set, basket).
 
 (() => {   // its own scope: nothing here may replace a name of app.js's
 
-const SG = {pieces: [], edits: {global: {}, pieces: {}, sets: []}, opts: null, sel: null, timer: null,
-            basketSets: [], loading: false, copyHits: []};
+const SG = {pieces: [], groups: [], edits: {global: {}, groups: {}, pieces: {}, sets: []}, opts: null, sel: null, selSet: null,
+            peek: null, timer: null, basketSets: [], loading: false, copyHits: []};
 const QCOL = {0: "#9d9d9d", 1: "#ffffff", 2: "#1eff00", 3: "#0070dd", 4: "#a335ee", 5: "#ff8000", 6: "#e6cc80", 7: "#e6cc80"};
 const INV_NAMES = {1: "Head", 2: "Neck", 3: "Shoulder", 4: "Shirt", 5: "Chest", 6: "Waist", 7: "Legs", 8: "Feet", 9: "Wrist",
                    10: "Hands", 11: "Finger", 12: "Trinket", 13: "One-Hand", 14: "Off Hand", 15: "Ranged", 16: "Back",
@@ -59,10 +64,18 @@ async function loadStats() {
     const [got, opts] = await Promise.all([api("/api/stats"), SG.opts ? SG.opts : api("/api/stats/options")]);
     SG.opts = opts;
     SG.pieces = got.pieces;
+    SG.groups = got.groups || [];
     SG.basketSets = got.basket_sets;
-    SG.edits = {global: got.edits.global || {}, pieces: got.edits.pieces || {}, sets: got.edits.sets || []};
+    SG.edits = {global: got.edits.global || {}, groups: got.edits.groups || {}, pieces: got.edits.pieces || {},
+                sets: got.edits.sets || []};
     if (tidy(SG.edits)) saveStats();
-    if (!SG.pieces.some(p => p.display === SG.sel)) SG.sel = SG.pieces.length ? SG.pieces[0].display : null;
+    // what's picked: still there, else the basket's first entry - a set as one, an item by itself
+    if (SG.selSet && !SG.groups.some(g => g.key === SG.selSet)) SG.selSet = null;
+    if (!SG.selSet && !SG.pieces.some(p => p.display === SG.sel)) {
+      const first = SG.groups[0];
+      SG.sel = SG.pieces.length ? SG.pieces[0].display : null;
+      if (first && first.set) SG.selSet = first.key;
+    }
     renderStats();
   } catch (e) {
     $("#stats-editor").replaceChildren(el("div", {class: "warnline"}, e.message));
@@ -76,8 +89,7 @@ function saveStats() {
   }, 400);
 }
 // Saved by an earlier version: classes for every piece (now each piece's own - the pieces that had
-// none of their own get it), and a piece's own item level, required level, quality and binding (now
-// set for every piece only). True when anything changed.
+// none of their own get it). True when anything changed.
 function tidy(edits) {
   let changed = false;
   const g = edits.global;
@@ -85,20 +97,39 @@ function tidy(edits) {
     for (const p of SG.pieces) { const e = own(p.display); if (!isSet(e.classes)) e.classes = g.classes; }
     delete g.classes; changed = true;
   }
-  for (const e of Object.values(edits.pieces))
-    for (const f of GLOBAL_ONLY) if (f in e) { delete e[f]; changed = true; }
   return changed;
 }
-const GLOBAL_ONLY = ["ilvl", "req", "quality", "bonding"];
+// a piece's own only once its set is broken (or when it is in no set): as itemstats.SET_FIELDS
+const SET_FIELDS = ["ilvl", "req", "quality", "bonding"];
 const piece = d => SG.pieces.find(p => p.display === d);
 const own = d => SG.edits.pieces[d] || (SG.edits.pieces[d] = {});
 const isSet = v => v !== undefined && v !== null && v !== "";
+const group = key => SG.groups.find(g => g.key === key);
+const groupEdits = key => SG.edits.groups[key] || (SG.edits.groups[key] = {});
+const broken = key => !!(SG.edits.groups[key] || {}).broken;
+// a piece edited alone: in no set (an item of its own), or its set broken
+const individual = p => !p.group_key || broken(p.group_key);
+// its value: its own, else its set's, else the basket's (itemstats.effective)
 function eff(p, field, dflt) {
   const mine = (SG.edits.pieces[p.display] || {})[field];
-  if (isSet(mine)) return mine;
+  if (isSet(mine) && (!SET_FIELDS.includes(field) || individual(p))) return mine;
+  return inherited(p, field, dflt);
+}
+// what it takes when it has none of its own: its set's, else the basket's
+function inherited(p, field, dflt) {
+  const s = p.group_key ? (SG.edits.groups[p.group_key] || {})[field] : undefined;
+  if (isSet(s)) return s;
   const g = SG.edits.global[field];
   return isSet(g) ? g : dflt;
 }
+// the piece the tooltip and the 3D view show: the picked one, or the one looked at in the picked set
+function shownPiece() {
+  if (!SG.selSet) return piece(SG.sel);
+  const g = group(SG.selSet);
+  return piece(SG.peek) || (g ? piece(g.pieces[0]) : null);
+}
+const selectSet = (key, peek = null) => { SG.selSet = key; SG.peek = peek; SG.copyOpen = false; renderStats(); };
+const selectPiece = d => { SG.selSet = null; SG.sel = d; renderStats(); };
 const hasStats = p => { const e = SG.edits.pieces[p.display] || {}; return !!((e.stats && e.stats.length) || e.armor || e.dmg_max); };
 const touched = p => hasStats(p) || ["ilvl", "req", "quality", "classes", "armor_type", "bonding"].some(f => isSet(eff(p, f)));
 function updateStatsBadge() {
@@ -270,7 +301,8 @@ function renderBulk() {
   const g = SG.edits.global, set = (f, v) => { g[f] = v; refreshAuto(); saveStats(); renderStats(); };
   const field = (label, control, hint) => el("label", {class: "bfield", title: hint || ""}, el("span", {}, label), control);
   $("#stats-bulk").replaceChildren(
-    el("h3", {}, "For every piece ", el("span", {class: "muted"}, "- armor type and stats a piece can still set for itself")),
+    el("h3", {}, "For everything in the basket ",
+       el("span", {class: "muted"}, "- a set's own values win (pick it below), and a piece's own")),
     el("div", {class: "bulk-row"},
       field("Armor type", sel({}, [["", "Each piece's own"], ...Object.entries(SG.opts.armour_types)], g.armor_type, v => set("armor_type", v ? +v : "")),
             "Cloth, leather, mail or plate for every armor piece (not cloaks or shields)"),
@@ -297,29 +329,122 @@ function renderList() {
       "something in your game, put it in the basket again (Basket > History)."));
     return;
   }
-  const groups = new Map();
-  for (const p of SG.pieces) {
-    const g = p.groups[0];
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(p);
-  }
-  $("#stats-list").replaceChildren(...[...groups.entries()].map(([g, ps]) => el("div", {class: "sgroup"},
-    el("h4", {}, g, ps[0].in_game ? el("span", {class: "badge dim", title: "Installed already: Install again to give the game " +
-                                             "what you change here"}, "in your game") : null), ps.map(p => {
-      const lvl = +eff(p, "ilvl", 0);
-      return el("div", {class: "srow-p" + (p.display === SG.sel ? " on" : ""), onclick: () => { SG.sel = p.display; renderStats(); }},
-        icon(p.icon, qualityOf(p), "sm", p.source),
-        el("div", {class: "meta"},
-          el("div", {class: "pname", style: `color:${QCOL[qualityOf(p)]}`}, (SG.edits.pieces[p.display] || {}).name || p.name),
-          el("div", {class: "sub muted"}, [INV_NAMES[p.inv], typeName(p)].filter(Boolean).join(" · "))),
-        hasStats(p) ? el("span", {class: "badge dim"}, lvl ? `ilvl ${lvl}` : "stats") :
-                      el("span", {class: "badge warn", title: "A level-1 cosmetic copy until it gets stats"}, "no stats"));
-    }))));
+  const inGame = ps => ps.some(p => p.entry) ? el("span", {class: "badge dim", title: "Installed already: Install again to give " +
+                                                          "the game what you change here"}, "in your game") : null;
+  // each basket entry: a set as one (its pieces under it), broken or an item by itself piece by piece
+  $("#stats-list").replaceChildren(...SG.groups.map(g => {
+    const ps = g.pieces.map(piece).filter(Boolean);
+    if (!ps.length) return null;
+    if (!g.set) return el("div", {class: "sgroup"}, el("h4", {}, g.name, inGame(ps)), ps.map(p => pieceRow(p, g, false)));
+    const whole = !broken(g.key), mine = ps.filter(p => p.group_key === g.key);
+    const missing = mine.filter(p => !hasStats(p)).length, lvl = +inherited(mine[0] || ps[0], "ilvl", 0);
+    const head = el("div", {class: "sset" + (SG.selSet === g.key ? " on" : ""), title: "Set the whole set's values",
+                            onclick: () => selectSet(g.key)},
+      icon(ps[0].icon, qualityOf(ps[0]), "sm", ps[0].source),
+      el("div", {class: "meta"},
+        el("div", {class: "pname"}, g.name),
+        el("div", {class: "sub muted"}, [plural(ps.length, "piece"), g.label, whole ? "one set" : "broken: piece by piece"]
+          .filter(Boolean).join(" · "))),
+      inGame(ps),
+      missing ? el("span", {class: "badge warn", title: "Level-1 cosmetic copies until they get stats"}, `${missing} no stats`) :
+        el("span", {class: "badge dim"}, lvl ? `ilvl ${lvl}` : "stats"));
+    return el("div", {class: "sgroup set" + (whole ? "" : " broken")}, head,
+              el("div", {class: "spieces"}, ps.map(p => pieceRow(p, g, whole))));
+  }).filter(Boolean));
+}
+// a piece's row: in a set kept as one, it shows that piece of the set; otherwise it is picked by itself.
+// A look two basket sets share is one item in game: it takes the first set's values.
+function pieceRow(p, g, whole) {
+  const lvl = +eff(p, "ilvl", 0), other = p.group_key && p.group_key !== g.key;
+  const on = whole ? SG.selSet === g.key && shownPiece() === p : !SG.selSet && p.display === SG.sel;
+  return el("div", {class: "srow-p" + (whole ? " inset" : "") + (on ? " on" : "") + (other ? " shared" : ""),
+                    title: other ? `One item in game with ${(group(p.group_key) || {}).name || "another set"}'s - it takes that set's values` : "",
+                    onclick: () => whole ? selectSet(g.key, p.display) : selectPiece(p.display)},
+    icon(p.icon, qualityOf(p), "sm", p.source),
+    el("div", {class: "meta"},
+      el("div", {class: "pname", style: `color:${QCOL[qualityOf(p)]}`}, (SG.edits.pieces[p.display] || {}).name || p.name),
+      el("div", {class: "sub muted"}, [INV_NAMES[p.inv], typeName(p)].filter(Boolean).join(" · "))),
+    hasStats(p) ? el("span", {class: "badge dim"}, lvl ? `ilvl ${lvl}` : "stats") :
+                  el("span", {class: "badge warn", title: "A level-1 cosmetic copy until it gets stats"}, "no stats"));
+}
+// A set picked as one: its values for all its pieces, its stats filled in together, its pieces to look
+// at - and "Break the set" to give each piece its own.
+function renderSetEditor(g) {
+  const box = $("#stats-editor"), ps = g.pieces.map(piece).filter(Boolean), mine = ps.filter(p => p.group_key === g.key);
+  const ge = groupEdits(g.key), G = SG.edits.global;
+  const set = (f, v) => { ge[f] = v; refreshAuto(); saveStats(); renderStats(); };
+  const field = (label, control, hint) => el("label", {class: "efield", title: hint || ""}, el("span", {}, label), control);
+  const basket = (f, names, none) => isSet(G[f]) ? `As the basket (${names ? names[G[f]] : G[f]})` : none;
+  const shown = shownPiece();
+  const classChips = el("div", {class: "class-chips"},
+    el("button", {class: "chip" + (!isSet(ge.classes) || ge.classes === -1 ? " on" : ""), onclick: () => set("classes", "")}, "All classes"),
+    Object.entries(SG.opts.classes).map(([id, name]) => {
+      const bit = 1 << (id - 1), on = isSet(ge.classes) && ge.classes !== -1 && (ge.classes & bit);
+      return el("button", {class: "chip cls" + (on ? " on" : ""), style: on ? `color:${CLASS_COLORS[id]};border-color:${CLASS_COLORS[id]}` : "",
+        onclick: () => set("classes", ((isSet(ge.classes) && ge.classes !== -1 ? ge.classes : 0) ^ bit) || "")}, name);
+    }));
+  const breakIt = () => {
+    ge.broken = true;
+    saveStats();
+    selectPiece((mine[0] || ps[0]).display);
+    toast(`${g.name} is broken: pick a piece to give it its own values`);
+  };
+  const keepWhole = () => {
+    ge.broken = false;
+    saveStats(); renderStats();
+    toast(`${g.name} is one set again: its pieces take its item level, quality and binding`);
+  };
+  box.replaceChildren(
+    el("div", {class: "ehead"}, shown ? icon(shown.icon, qualityOf(shown), "", shown.source) : null,
+      el("div", {class: "meta"},
+        el("div", {class: "set-title"}, g.name),
+        el("div", {class: "sub muted"}, [plural(ps.length, "piece"), g.label,
+          ge.broken ? "broken - each piece can set its own item level, quality and binding" : "one set - all its pieces take these"]
+          .filter(Boolean).join(" · ")))),
+    el("div", {class: "erow"},
+      field("Armor type", sel({}, [["", basket("armor_type", ARMOR_NAMES, "Each piece's own")], ...Object.entries(SG.opts.armour_types)],
+                              ge.armor_type, v => set("armor_type", v ? +v : "")), "Cloth, leather, mail or plate for the set's armor pieces"),
+      field("Item level", num({placeholder: isSet(G.ilvl) ? `basket: ${G.ilvl}` : "not set", max: 300}, ge.ilvl, v => set("ilvl", v)),
+            "What WotLK's numbers are filled in for"),
+      field("Required level", num({placeholder: isSet(G.req) ? `basket: ${G.req}` : "none", max: 80}, ge.req, v => set("req", v))),
+      field("Quality", sel({}, [["", basket("quality", SG.opts.qualities, "Each piece's own")],
+                                ...Object.entries(SG.opts.qualities).filter(([q]) => q <= 5)], ge.quality, v => set("quality", v === "" ? "" : +v))),
+      field("Binding", sel({}, [["", basket("bonding", SG.opts.bonding, "No binding")], ...Object.entries(SG.opts.bonding).filter(([b]) => +b)],
+                           ge.bonding, v => set("bonding", v === "" ? "" : +v))),
+      field("Stats for", sel({}, [["", isSet(G.profile) ? `As the basket (${PROFILES[G.profile].label})` : "Each piece's type"],
+                                  ...Object.entries(PROFILES).map(([k, x]) => [k, x.label])], ge.profile, v => set("profile", v)),
+            "The role the set's stats are chosen for")),
+    el("div", {class: "esec"}, el("h4", {}, "Classes"), classChips),
+    el("div", {class: "esec"}, el("h4", {}, "Stats"),
+      el("div", {class: "bulk-actions"},
+        el("button", {class: "btn", onclick: () => {
+          const done = mine.filter((p, k) => fillPiece(p, k)).length;
+          saveStats(); renderStats();
+          toast(done ? `Filled in the stats of ${plural(done, "piece")} of ${g.name}` : "Set the item level first");
+        }}, "Fill in stats for this set"),
+        el("span", {class: "muted small"}, "WotLK's budget for the set's item level, quality and role, each piece by its slot."))),
+    el("div", {class: "esec"}, el("h4", {}, "Pieces"),
+      el("div", {class: "set-pieces"}, ps.map(p => el("button", {class: "chip" + (p === shown ? " on" : ""),
+        title: p.group_key !== g.key ? `One item in game with ${(group(p.group_key) || {}).name}'s - it takes that set's values` : "Show it",
+        onclick: () => selectSet(g.key, p.display)}, icon(p.icon, qualityOf(p), "xs", p.source),
+        (SG.edits.pieces[p.display] || {}).name || p.name, hasStats(p) ? null : el("span", {class: "badge warn"}, "no stats"))))),
+    el("div", {class: "esec set-break"}, ge.broken ?
+      [el("button", {class: "btn ghost", onclick: keepWhole}, "Keep it as one set"),
+       el("span", {class: "muted small"}, "Its pieces take the set's item level, quality and binding again (their own are kept for " +
+                                          "when you break it again).")] :
+      [el("button", {class: "btn ghost", onclick: breakIt}, "Break the set"),
+       el("span", {class: "muted small"}, "Give each piece its own item level, quality, binding and stats. The set's values stay " +
+                                          "each piece's starting point.")]));
 }
 function renderEditor() {
+  if (SG.selSet) {
+    const g = group(SG.selSet);
+    if (g) return renderSetEditor(g);
+    SG.selSet = null;
+  }
   const p = piece(SG.sel), box = $("#stats-editor");
   if (!p) { box.replaceChildren(el("div", {class: "muted"}, "Pick a piece.")); return; }
-  const e = own(p.display), g = SG.edits.global;
+  const e = own(p.display);
   const ch = (f, v, auto = true) => { e[f] = v; if (auto && e.stats_mode === "auto") fillPiece(p, SG.pieces.indexOf(p)); saveStats(); renderStats(); };
   const row = (...kids) => el("div", {class: "erow"}, ...kids);
   const field = (label, control) => el("label", {class: "efield"}, el("span", {}, label), control);
@@ -381,10 +506,11 @@ function renderEditor() {
         (() => { const i = el("input", {class: "ename", value: e.name || "", placeholder: p.name, style: `color:${QCOL[qualityOf(p)]}`});
                  i.addEventListener("input", () => { e.name = i.value; saveStats(); renderTooltip(); renderList(); }); return i; })(),
         el("div", {class: "sub muted"}, [INV_NAMES[p.inv], typeName(p), p.groups.join(", ")].filter(Boolean).join(" · ")))),
-    row(isArmorPiece(p) ? field("Armor type", sel({}, [["", `For every piece (${ARMOR_NAMES[isSet(g.armor_type) ? g.armor_type : p.sub]})`],
+    row(isArmorPiece(p) ? field("Armor type", sel({}, [["", `${p.group_key ? "As the set" : "As the basket"} (${ARMOR_NAMES[inherited(p, "armor_type", p.sub)]})`],
           ...Object.entries(SG.opts.armour_types)], e.armor_type, v => ch("armor_type", v ? +v : ""))) : null,
         el("label", {class: "check"}, (() => { const c = el("input", {type: "checkbox", checked: !!e.unique});
           c.addEventListener("change", () => { e.unique = c.checked; saveStats(); renderTooltip(); }); return c; })(), " Unique")),
+    levelSection(p, e, ch, row, field),
     el("div", {class: "esec"}, el("h4", {}, "Classes"), classChips),
     el("div", {class: "esec"}, el("h4", {}, "Stats"), ...statsHead, copyBox, el("div", {class: "statrows"}, statsRows), addStat),
     el("div", {class: "esec"}, el("h4", {}, isWeapon(p) ? "Weapon" : "Armor"),
@@ -398,6 +524,27 @@ function renderEditor() {
                                  el("span", {class: "coin s"}), sellIn(copper, "c"), el("span", {class: "coin c"})))),
       row(field("Description", (() => { const i = el("input", {value: e.description || "", placeholder: "the yellow line at the bottom"});
         i.addEventListener("input", () => { e.description = i.value; saveStats(); renderTooltip(); }); return i; })()))));
+}
+
+// A piece's own item level, required level, quality and binding: once its set is broken, or when it is
+// in no set - each blank takes the set's (else the basket's). In a set kept whole, the set says them.
+function levelSection(p, e, ch, row, field) {
+  const from = p.group_key ? "set" : "basket", name = d => (group(p.group_key) || {}).name || d;
+  if (!individual(p))
+    return el("div", {class: "esec"}, el("h4", {}, "Level and quality"),
+      el("div", {class: "muted small"}, `${name("Its set")} says its item level, quality and binding. `,
+        el("a", {href: "#", onclick: ev => { ev.preventDefault(); selectSet(p.group_key, p.display); }}, "Open the set"),
+        " - or break it there to give this piece its own."));
+  const like = (f, names, none) => { const v = inherited(p, f); return isSet(v) ? `As the ${from} (${names ? names[v] : v})` : none; };
+  return el("div", {class: "esec"}, el("h4", {}, "Level and quality", el("span", {class: "muted"}, p.group_key ? " - this piece's own" : "")),
+    row(field("Item level", num({placeholder: isSet(inherited(p, "ilvl")) ? `${from}: ${inherited(p, "ilvl")}` : "not set", max: 300},
+                                 e.ilvl, v => ch("ilvl", v))),
+        field("Required level", num({placeholder: isSet(inherited(p, "req")) ? `${from}: ${inherited(p, "req")}` : "none", max: 80},
+                                     e.req, v => ch("req", v, false))),
+        field("Quality", sel({}, [["", like("quality", SG.opts.qualities, "Its own")],
+                                  ...Object.entries(SG.opts.qualities).filter(([q]) => q <= 5)], e.quality, v => ch("quality", v === "" ? "" : +v))),
+        field("Binding", sel({}, [["", like("bonding", SG.opts.bonding, "No binding")], ...Object.entries(SG.opts.bonding).filter(([b]) => +b)],
+                             e.bonding, v => ch("bonding", v === "" ? "" : +v, false)))));
 }
 
 // copy a real WotLK item's numbers onto the piece
@@ -427,7 +574,7 @@ function copyPanel(p) {
 
 // -- the tooltip, as the 3.3.5 client draws it -------------------------------------------------
 function renderTooltip() {
-  const p = piece(SG.sel), tip = $("#stats-tooltip");
+  const p = shownPiece(), tip = $("#stats-tooltip");
   if (!p) { tip.replaceChildren(); return; }
   const e = SG.edits.pieces[p.display] || {}, q = qualityOf(p), L = [];
   const line = (text, cls = "", right = null) => L.push(el("div", {class: "tl " + cls}, el("span", {}, text), right ? el("span", {}, right) : null));
@@ -487,7 +634,7 @@ function renderTooltip() {
 // -- the piece in 3D, under its tooltip ---------------------------------------------------------
 // The workbench's one viewer: it comes here from the item panel (and goes back when one opens).
 function renderPreview() {
-  const box = $("#stats-preview"), p = piece(SG.sel);
+  const box = $("#stats-preview"), p = shownPiece();
   if (!p || typeof previewBox !== "function") { box.replaceChildren(); SG.pb = null; return; }
   if (!SG.pb || !box.contains(SG.pb.box) || (SG.pb.v && !SG.pb.box.contains(SG.pb.v.canvas))) {
     SG.pb = previewBox("stats-pv");
@@ -564,7 +711,9 @@ function bonusPicker(b, done) {
 
 function wireStats() {
   $("#sets-new").addEventListener("click", () => {
-    SG.edits.sets.push({key: "s" + Date.now().toString(36), name: "New set", pieces: SG.sel ? [SG.sel] : [], bonuses: []});
+    const g = SG.selSet ? group(SG.selSet) : null;
+    SG.edits.sets.push({key: "s" + Date.now().toString(36), name: g ? g.name : "New set",
+                        pieces: g ? g.pieces.slice(0, 17) : SG.sel ? [SG.sel] : [], bonuses: []});
     saveStats(); renderStats();
   });
   $("#sets-from-basket").addEventListener("click", () => {

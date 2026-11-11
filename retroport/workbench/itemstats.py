@@ -6,9 +6,16 @@ weapon damage and speed, sockets and socket bonus, durability, price, binding, a
 and item sets with their set bonuses. The page works the numbers out (WotLK's own rules, see
 ``wotlk``) and keeps them in ``<data>/item-stats.json``:
 
-    {"global": {field: value},                every piece's value unless the piece says otherwise
+    {"global": {field: value},                every piece's value unless its set or the piece says otherwise
+     "groups": {"<basket key>": {field: value, "broken": bool}},   a basket set's own values
      "pieces": {"<retail display>": {...}},    a piece's own values (and its worked-out stats)
      "sets":   [{"key", "name", "pieces": [display...], "bonuses": [[pieces needed, spell]]}]}
+
+A basket set's pieces take its values (item level, required level, quality, binding, armour type, the
+role its stats are for, classes) over the basket's; a piece's own armour type, role, classes and stats
+win over both. Item level, required level, quality and binding a piece sets for itself only once its
+set is *broken* (or when it is in no set: an item of its own) - ``SET_FIELDS``. Which set a look is in
+is the basket's (``groups_of``: its first set), worked out again at each install.
 
 A piece is Install's item for one look (one item per retail display; ``direct`` says which
 entry). Install's item SQL is its item rows, then one UPDATE per piece with its stats
@@ -56,25 +63,32 @@ SET_ID_START = 3000                                      # the client's own item
 _lock = threading.Lock()
 
 
+SET_FIELDS = ("ilvl", "req", "quality", "bonding")     # a piece's own only once its set is broken
+SET_KINDS = ("set", "itemset")                         # the basket entries that are sets of pieces
+
+
 def empty() -> dict:
-    return {"global": {}, "pieces": {}, "sets": []}
+    return {"global": {}, "groups": {}, "pieces": {}, "sets": []}
+
+
+def _clean(d: dict) -> dict:
+    return {"global": dict(d.get("global") or {}), "groups": {str(k): dict(v) for k, v in (d.get("groups") or {}).items()},
+            "pieces": dict(d.get("pieces") or {}), "sets": list(d.get("sets") or [])}
 
 
 def load(data_dir: str) -> dict:
     try:
         with open(os.path.join(data_dir, "item-stats.json"), encoding="utf-8") as fh:
-            d = json.load(fh)
-        return {"global": dict(d.get("global") or {}), "pieces": dict(d.get("pieces") or {}),
-                "sets": list(d.get("sets") or [])}
-    except (OSError, ValueError, AttributeError):
+            return _clean(json.load(fh))
+    except (OSError, ValueError, AttributeError, TypeError):
         return empty()
 
 
 def save(data_dir: str, edits: dict) -> None:
-    if not isinstance(edits, dict) or not isinstance(edits.get("pieces", {}), dict):
-        raise ValueError("the stats are an object with global, pieces and sets")
-    clean = {"global": dict(edits.get("global") or {}), "pieces": dict(edits.get("pieces") or {}),
-             "sets": list(edits.get("sets") or [])}
+    if not isinstance(edits, dict) or not isinstance(edits.get("pieces", {}), dict) or \
+            not isinstance(edits.get("groups", {}), dict):
+        raise ValueError("the stats are an object with global, groups, pieces and sets")
+    clean = _clean(edits)
     os.makedirs(data_dir, exist_ok=True)
     path = os.path.join(data_dir, "item-stats.json")
     with open(path + ".part", "w", encoding="utf-8") as fh:
@@ -82,22 +96,39 @@ def save(data_dir: str, edits: dict) -> None:
     os.replace(path + ".part", path)
 
 
-def effective(edits: dict, display, field: str, default=None):
-    """A piece's value for ``field``: its own, else every piece's (global), else ``default``.
-    "" and None mean "not set"."""
+def groups_of(plan: dict) -> dict[str, str]:
+    """retail display -> the basket key of the first set in ``plan`` (catalog.plan_basket) holding it;
+    a look in no set (an item of its own) has none."""
+    out: dict[str, str] = {}
+    for e in plan.get("entries") or []:
+        if e.get("kind") in SET_KINDS:
+            for look in e.get("looks") or []:
+                d = str(look.get("display") or "")
+                if d and d != "0":
+                    out.setdefault(d, e["key"])
+    return out
+
+
+def effective(edits: dict, display, field: str, default=None, group: str | None = None):
+    """A piece's value for ``field``: its own, else its set's (``group``: its basket set's key), else
+    every piece's (global), else ``default``. Item level, required level, quality and binding are a
+    piece's own only when it is in no set or its set is broken. "" and None mean "not set"."""
+    g = ((edits.get("groups") or {}).get(group) or {}) if group else {}
     own = (edits.get("pieces") or {}).get(str(display), {}).get(field)
-    if own not in (None, ""):
+    if own not in (None, "") and (field not in SET_FIELDS or not group or g.get("broken")):
         return own
-    g = (edits.get("global") or {}).get(field)
-    return g if g not in (None, "") else default
+    if g.get(field) not in (None, ""):
+        return g[field]
+    v = (edits.get("global") or {}).get(field)
+    return v if v not in (None, "") else default
 
 
-def touched(edits: dict, display) -> bool:
+def touched(edits: dict, display, group: str | None = None) -> bool:
     """Whether a piece has anything to write (otherwise it stays a cosmetic copy)."""
     p = (edits.get("pieces") or {}).get(str(display), {})
     fields = ("ilvl", "req", "quality", "classes", "armor_type", "bonding")
-    return bool(p.get("stats") or p.get("armor") or p.get("dmg_max") or any(effective(edits, display, f) not in (None, "")
-                                                                            for f in fields))
+    return bool(p.get("stats") or p.get("armor") or p.get("dmg_max") or
+                any(effective(edits, display, f, group=group) not in (None, "") for f in fields))
 
 
 # -- the item rows ------------------------------------------------------------------------------
@@ -156,11 +187,12 @@ def column_value(col: str, v):
     return min(max(v, lo), hi) if lo is not None and isinstance(v, int) and not isinstance(v, bool) else v
 
 
-def updates(edits: dict, ids: dict, rows: dict[int, dict], set_ids: dict, names: dict | None = None) -> list[str]:
+def updates(edits: dict, ids: dict, rows: dict[int, dict], set_ids: dict, names: dict | None = None,
+            groups: dict | None = None) -> list[str]:
     """One UPDATE per touched piece (``rows``: the item rows as the SQL inserts them, entry -> {column:
     value}; a row stays as it is otherwise). ``names``: the name each look has in the workbench (the
     item the basket chose) - a row named after another retail item that shares the look gets it (a
-    name typed on the Stats page wins over both)."""
+    name typed on the Stats page wins over both). ``groups``: each look's basket set (``groups_of``)."""
     out = []
     sets = piece_sets(edits, set_ids)
     for display, entry in sorted(((str(d), e) for d, e in (ids.get("item") or {}).items()), key=lambda t: t[1]):
@@ -168,10 +200,11 @@ def updates(edits: dict, ids: dict, rows: dict[int, dict], set_ids: dict, names:
         if row is None:
             continue
         in_set = sets.get(display)
+        group = (groups or {}).get(display)
         p = (edits.get("pieces") or {}).get(display, {})
         name = p.get("name") or (names or {}).get(display)
         renamed = bool(name) and name != row.get("name")
-        if not (touched(edits, display) or in_set):
+        if not (touched(edits, display, group) or in_set):
             if renamed:                                     # nothing else to give it: its name only
                 out.append(f"UPDATE `item_template` SET `name` = {_q(name)} WHERE `entry` = {int(entry)};")
             continue
@@ -180,14 +213,14 @@ def updates(edits: dict, ids: dict, rows: dict[int, dict], set_ids: dict, names:
         if renamed:
             set_["name"] = _q(name)
         for col, field in (("Quality", "quality"), ("ItemLevel", "ilvl"), ("RequiredLevel", "req"), ("bonding", "bonding")):
-            v = (edits.get("global") or {}).get(field)              # for every piece only (the page sets no other)
+            v = effective(edits, display, field, group=group)
             if v not in (None, ""):
                 set_[col] = int(v)
-        classes = effective(edits, display, "classes")
+        classes = effective(edits, display, "classes", group=group)
         if classes not in (None, ""):
             classes = int(classes)
             set_["AllowableClass"] = -1 if classes in (0, -1) or classes & ALL_CLASSES == ALL_CLASSES else classes
-        at = effective(edits, display, "armor_type")
+        at = effective(edits, display, "armor_type", group=group)
         if at and cls == 4 and sub in ARMOUR_TYPES and inv != 16 and int(at) in ARMOUR_TYPES:
             set_["subclass"], set_["Material"] = int(at), MATERIAL[int(at)]
         stats = [(int(t), int(v)) for t, v in (p.get("stats") or []) if int(t) in STATS and int(v)][:10]
@@ -207,7 +240,7 @@ def updates(edits: dict, ids: dict, rows: dict[int, dict], set_ids: dict, names:
             if sub in RANGED:
                 set_["RangedModRange"] = 100
                 set_["ammo_type"] = RANGED[sub]
-        if effective(edits, display, "unique"):
+        if effective(edits, display, "unique", group=group):
             set_["maxcount"] = 1
         sockets = [int(c) for c in (p.get("sockets") or []) if int(c) in SOCKETS][:3]
         for k in range(3):
