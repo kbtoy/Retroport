@@ -30,6 +30,34 @@ def test_a_piece_takes_every_pieces_values_unless_it_has_its_own():
     assert I.touched(edits, "12") and not I.touched(I.empty(), "12")
 
 
+def test_each_basket_set_has_its_own_values_and_a_broken_one_lets_each_piece_set_its_own():
+    plan = {"entries": [{"kind": "set", "key": "set:a", "looks": [{"display": 10}, {"display": 11}]},
+                        {"kind": "set", "key": "set:b", "looks": [{"display": 11}, {"display": 12}]},
+                        {"kind": "item", "key": "item:c", "looks": [{"display": 13}]}]}
+    groups = I.groups_of(plan)
+    assert groups == {"10": "set:a", "11": "set:a", "12": "set:b"}           # a shared look: its first set's; an item: none
+    edits = {"global": {"ilvl": 200, "quality": 3, "armor_type": 2},
+             "groups": {"set:a": {"ilvl": 264, "armor_type": 4}, "set:b": {"ilvl": 277, "broken": True}},
+             "pieces": {"10": {"ilvl": 300, "armor_type": 3}, "12": {"ilvl": 284}, "13": {"ilvl": 250}}, "sets": []}
+    eff = lambda d, f: I.effective(edits, d, f, group=groups.get(d))     # noqa: E731
+    assert eff("10", "ilvl") == 264 and eff("11", "ilvl") == 264        # a whole set: the set's, not the piece's own
+    assert eff("10", "armor_type") == 3 and eff("11", "armor_type") == 4  # armor type: still a piece's own
+    assert eff("12", "ilvl") == 284 and eff("12", "armor_type") == 2     # broken: its own, else the basket's
+    assert eff("13", "ilvl") == 250 and eff("13", "quality") == 3        # an item of its own: its own, else the basket's
+    rows = {900000 + k: {"entry": 900000 + k, "class": 4, "subclass": 1, "InventoryType": 5, "name": f"P{k}"} for k in range(4)}
+    ids = {"item": {str(10 + k): 900000 + k for k in range(4)}}
+    ups = {int(line.rsplit("= ", 1)[1].rstrip(";")): line for line in I.updates(edits, ids, rows, {}, groups=groups)}
+    assert "`ItemLevel` = 264" in ups[900000] and "`ItemLevel` = 264" in ups[900001]
+    assert "`ItemLevel` = 284" in ups[900002] and "`ItemLevel` = 250" in ups[900003]
+    assert "`subclass` = 3" in ups[900000] and "`subclass` = 4" in ups[900001]
+
+
+def test_the_set_values_are_kept_when_saved(tmp_path):
+    I.save(str(tmp_path), {"global": {}, "groups": {"set:a": {"ilvl": 264, "broken": True}}, "pieces": {}, "sets": []})
+    assert I.load(str(tmp_path))["groups"] == {"set:a": {"ilvl": 264, "broken": True}}
+    assert I.load(str(tmp_path / "none"))["groups"] == {}
+
+
 def test_the_stats_become_one_update_per_piece():
     edits = {"global": {"ilvl": 264, "req": 80, "quality": 4, "armor_type": 4, "classes": 1535},
              "pieces": {"10": {"stats": [[38, 93], [3, 69]], "dmg_min": 326, "dmg_max": 490, "delay": 1800, "durability": 75},
@@ -150,11 +178,14 @@ def test_every_value_stays_inside_its_azerothcore_column():
     assert I.column_value("Quality", 9) == 7 and I.column_value("name", "'x'") == "'x'"
 
 
-def test_levels_quality_and_binding_are_for_every_piece_only():
+def test_levels_quality_and_binding_of_a_piece_in_a_whole_set_are_the_sets():
     kit = {900001: {"entry": 900001, "class": 4, "subclass": 1, "InventoryType": 1, "name": "Hood"}}
     edits = {"global": {"ilvl": 277, "quality": 4}, "pieces": {"5": {"ilvl": 264, "quality": 3, "stats": [[7, 10]]}}, "sets": []}
-    sql = I.updates(edits, {"item": {"5": 900001}}, kit, {})[0]
-    assert "`ItemLevel` = 277" in sql and "`Quality` = 4" in sql
+    sql = I.updates(edits, {"item": {"5": 900001}}, kit, {}, groups={"5": "set:a"})[0]
+    assert "`ItemLevel` = 277" in sql and "`Quality` = 4" in sql          # the set has none: the basket's
+    edits["groups"] = {"set:a": {"broken": True}}
+    sql = I.updates(edits, {"item": {"5": 900001}}, kit, {}, groups={"5": "set:a"})[0]
+    assert "`ItemLevel` = 264" in sql and "`Quality` = 3" in sql          # broken: the piece's own
 
 
 def test_a_look_the_kit_named_after_another_item_gets_the_workbenchs_name():

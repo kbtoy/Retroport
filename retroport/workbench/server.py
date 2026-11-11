@@ -333,27 +333,36 @@ class Workbench:
         (Something in the game gets its stats changed by putting it in the basket again.)"""
         plan = C.plan_basket(self.catalogs, self.basket())
         entries = {str(k): v for k, v in (self.direct.built_record().get("entries") or {}).items()}
-        pieces, seen = [], {}
+        in_set = IS.groups_of(plan)
+        pieces, seen, groups = [], {}, []
         for e in plan["entries"]:
             cat = self.catalogs.get(e.get("source") or "")
+            members = []
             for look in e["looks"]:
                 d = str(look.get("display") or "")
                 if not d or d == "0":
                     continue
+                if d not in members:
+                    members.append(d)
                 if d in seen:
                     seen[d]["groups"].append(e["name"])
                     continue
                 row = cat.by_id.get(look.get("item")) if cat else None
+                # its set: the first basket set holding the look (its values the piece takes), none for an item
+                # of its own
                 p = {"display": d, "item": look.get("item"), "name": look.get("name") or f"Look {d}",
                      "label": look.get("label") or "", "icon": look.get("icon") or 0, "quality": look.get("quality"),
                      "inv": look.get("slot") or 0, "cls": row[C.F["cls"]] if row is not None else 0,
                      "sub": row[C.F["sub"]] if row is not None else 0, "source": e.get("source"),
-                     "groups": [e["name"]], "group_key": e["key"], "entry": entries.get(d)}
+                     "groups": [e["name"]], "group_key": in_set.get(d, ""), "entry": entries.get(d)}
                 seen[d] = p
                 pieces.append(p)
-        return {"pieces": pieces, "edits": IS.load(self.settings.data_dir),
+            if members:
+                groups.append({"key": e["key"], "name": e["name"], "set": e["kind"] in IS.SET_KINDS, "pieces": members,
+                               "label": e.get("label") or ""})
+        return {"pieces": pieces, "groups": groups, "edits": IS.load(self.settings.data_dir),
                 "basket_sets": [{"key": e["key"], "name": e["name"], "pieces": [str(l["display"]) for l in e["looks"] if l.get("display")]}
-                                for e in plan["entries"] if e["kind"] in ("set", "itemset")]}
+                                for e in plan["entries"] if e["kind"] in IS.SET_KINDS]}
 
     def look_names(self) -> dict:
         """The name each look of what Install builds has in the workbench (its first entry's): the
@@ -371,7 +380,7 @@ class Workbench:
         try:
             got = self.stats_pieces()
             edits = got["edits"]
-            without = [p["name"] for p in got["pieces"] if not IS.touched(edits, p["display"])]
+            without = [p["name"] for p in got["pieces"] if not IS.touched(edits, p["display"], p.get("group_key") or None)]
             return {"stats": {"pieces": len(got["pieces"]), "without": len(without), "names": without[:6]}}
         except Exception as e:
             return {"stats": {"pieces": 0, "without": 0, "names": [], "error": str(e)}}
