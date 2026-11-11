@@ -47,8 +47,49 @@ void main() {
   vUv3 = (uUv3Mat * vec4(coord(uCoord.z, env), 0.0, 1.0)).xy;
   gl_Position = uMvp * wp;
 }`;
+// A colourway's recolour (colour.js's Colour.apply, in GLSL): k = (hue in radians, saturation,
+// brightness multiplier, dye). OKLab; the texel keeps its lightness and its colourfulness relative to its
+// gamut, takes the hue, and dye pushes it to the colour's own saturation.
+const RECOLOUR = `
+vec3 rcLin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
+vec3 rcSrgb(vec3 c) { c = max(c, 0.0); return mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
+vec3 rcLab(vec3 c) {
+  vec3 lms = pow(mat3(0.4122214708, 0.2119034982, 0.0883024619, 0.5363325363, 0.6806995451, 0.2817188376,
+                      0.0514459929, 0.1073969566, 0.6299787005) * c, vec3(1.0 / 3.0));
+  return mat3(0.2104542553, 1.9779984951, 0.0259040371, 0.7936177850, -2.4285922050, 0.7827717662,
+              -0.0040720468, 0.4505937099, -0.8086757660) * lms;
+}
+vec3 rcRgb(vec3 lab) {
+  vec3 lms = mat3(1.0, 1.0, 1.0, 0.3963377774, -0.1055613458, -0.0894841775, 0.2158037573, -0.0638541728, -1.2914855480) * lab;
+  lms = lms * lms * lms;
+  return mat3(4.0767416621, -1.2684380046, -0.0041960863, -3.3077115913, 2.6097574011, -0.7034186147,
+              0.2309699292, -0.3413193965, 1.7076147010) * lms;
+}
+float rcMax(float L, float h) {
+  vec2 ab = vec2(cos(h), sin(h));
+  float lo = 0.0, hi = 0.4;
+  for (int i = 0; i < 14; i++) {
+    float mid = 0.5 * (lo + hi);
+    vec3 c = rcRgb(vec3(L, mid * ab));
+    if (all(greaterThanEqual(c, vec3(-1e-4))) && all(lessThanEqual(c, vec3(1.0001)))) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+vec3 recolour(vec3 c, vec4 k) {
+  if (any(lessThan(c, vec3(0.0)))) return c;
+  float m = max(1.0, max(c.r, max(c.g, c.b)));
+  vec3 lab = rcLab(rcLin(c / m));
+  float C = length(lab.yz), h = atan(lab.z, lab.y), cm = rcMax(lab.x, h);
+  float rel = cm > 1e-5 ? C / cm : 0.0;
+  float base = clamp(rel * 1.25 * k.y, 0.0, 1.0);
+  float r = (base + (k.y - base) * k.w) * (1.0 - 0.35 * smoothstep(0.8, 1.0, lab.x));
+  float Lo = min(1.0, lab.x * k.z), Co = r * rcMax(Lo, k.x);
+  return clamp(rcSrgb(rcRgb(vec3(Lo, Co * cos(k.x), Co * sin(k.x)))), 0.0, 1.0) * m;
+}`;
 // uPs: the batch's pixel combiner (PS below) - how its textures make a lit colour (d), an unlit glow
-// added on top (sp) and an opacity (a). uWgt: the weights of its three textures.
+// added on top (sp) and an opacity (a). uWgt: the weights of its three textures. A colourway recolours the
+// lit colour by its armor's colour (uLookA) and what glows by its glows' (uLookG): the added glow, and all
+// of a batch that adds itself (uGlowBatch).
 // uFx: a state kit's shading in place of the combiner, as the x64 client's own programs draw it
 // (Engine/Source/Gx/ShaderContainer: Gradient.ps.hlsl, Dissolve.ps.hlsl; CM2SceneRender sets their values)
 const FS = `#version 300 es
@@ -69,7 +110,9 @@ uniform vec4 uL0; uniform vec4 uL1; uniform vec4 uL2;    // each layer's scale (
 uniform vec4 uModX; uniform vec4 uDTint;                 // the set's ModX; the tint times its intensity
 uniform vec4 uDShape;                                    // projection, ramp, dissolve value, fresnel power
 uniform vec4 uDExtra;                                    // the projection's scale, 1: the blend style
+uniform vec4 uLookA; uniform bool uLookAOn; uniform vec4 uLookG; uniform bool uLookGOn; uniform bool uGlowBatch;
 out vec4 outColor;
+${RECOLOUR}
 vec2 project(vec3 p, vec2 uv) {
   float type = uDShape.x;
   if (type > 6.5) return uv;
@@ -167,7 +210,10 @@ void main() {
   if (uKeyTex) a = t0.a;                     // an alpha-keyed batch with an opaque combiner: cut by its texture
   a = clamp(a * vEdge, 0.0, 1.0) * uTint.a;
   if (a < uAlphaRef) discard;
-  vec4 o = vec4(d * l * uTint.rgb + sp, uOpaque ? 1.0 : a);
+  vec3 base = d * uTint.rgb;
+  if (uGlowBatch ? uLookGOn : uLookAOn) base = recolour(base, uGlowBatch ? uLookG : uLookA);
+  if (uLookGOn && any(greaterThan(sp, vec3(0.0)))) sp = recolour(sp, uLookG);
+  vec4 o = vec4(base * l + sp, uOpaque ? 1.0 : a);
   if (uPremul) o.rgb *= o.a;
   outColor = o;
 }`;
@@ -179,11 +225,12 @@ uniform mat4 uMvp;
 out vec2 vUv; out vec4 vCol; out vec2 vUv2; out vec2 vUv3;
 void main() { vUv = aUv; vCol = aCol; vUv2 = aUv2; vUv3 = aUv3; gl_Position = uMvp * vec4(aPos, 1.0); }`;
 const PFS = `#version 300 es
-precision mediump float;
+precision highp float;
 in vec2 vUv; in vec4 vCol; in vec2 vUv2; in vec2 vUv3;
 uniform sampler2D uTex; uniform sampler2D uTex2; uniform sampler2D uTex3; uniform int uMulti;
-uniform float uAlphaRef; uniform bool uPremul;
+uniform float uAlphaRef; uniform bool uPremul; uniform vec4 uLook; uniform bool uLookOn;
 out vec4 outColor;
+${RECOLOUR}
 void main() {
   vec4 t = texture(uTex, vUv);
   if (t.a < uAlphaRef) discard;
@@ -192,6 +239,7 @@ void main() {
   else if (uMulti == 2) { vec4 m = t * texture(uTex2, vUv2) * texture(uTex3, vUv3); c = vec4(vCol.rgb * m.rgb, m.a * vCol.a); }
   else c = vec4(t.rgb * vCol.rgb, t.a * vCol.a);
   if (c.a < uAlphaRef) discard;
+  if (uLookOn) c.rgb = recolour(c.rgb, uLook);       // a colourway's particles' or ribbons' colour
   if (uPremul) c.rgb *= c.a;
   outColor = c;
 }`;
@@ -463,7 +511,8 @@ class Viewer {
     for (const n of ["uMvp", "uView", "uModel", "uBones", "uSkinned", "uTex", "uHasTex", "uTex2", "uTex3", "uPs", "uWgt",
                      "uKeyTex", "uUvMat", "uUv2Mat", "uUv3Mat", "uCoord", "uEdge", "uAlphaRef", "uUnlit", "uOpaque",
                      "uPremul", "uLight", "uTint", "uGradAxis", "uFx", "uFxModes", "uRamp0", "uRamp1", "uRamp2", "uGShape",
-                     "uGEdge", "uMask", "uSecond", "uThird", "uL0", "uL1", "uL2", "uModX", "uDTint", "uDShape", "uDExtra"])
+                     "uGEdge", "uMask", "uSecond", "uThird", "uL0", "uL1", "uL2", "uModX", "uDTint", "uDShape", "uDExtra",
+                     "uLookA", "uLookAOn", "uLookG", "uLookGOn", "uGlowBatch"])
       this.u[n] = gl.getUniformLocation(this.prog, n);
     this.a = {};
     for (const n of ["aPos", "aNrm", "aUv", "aUv2", "aW", "aB"]) this.a[n] = gl.getAttribLocation(this.prog, n);
@@ -471,7 +520,8 @@ class Viewer {
     this.pu = {mvp: gl.getUniformLocation(this.pprog, "uMvp"), tex: gl.getUniformLocation(this.pprog, "uTex"),
                tex2: gl.getUniformLocation(this.pprog, "uTex2"), tex3: gl.getUniformLocation(this.pprog, "uTex3"),
                multi: gl.getUniformLocation(this.pprog, "uMulti"), ref: gl.getUniformLocation(this.pprog, "uAlphaRef"),
-               premul: gl.getUniformLocation(this.pprog, "uPremul")};
+               premul: gl.getUniformLocation(this.pprog, "uPremul"), look: gl.getUniformLocation(this.pprog, "uLook"),
+               lookOn: gl.getUniformLocation(this.pprog, "uLookOn")};
     this.pvao = gl.createVertexArray(); this.pbuf = gl.createBuffer();
     gl.bindVertexArray(this.pvao); gl.bindBuffer(gl.ARRAY_BUFFER, this.pbuf);
     const pattr = (name, size, offset) => {
@@ -607,6 +657,22 @@ class Viewer {
     if (dz) part.dissolveTex = dz.layers.map(l => tex(l.texture) || this.white);
     this.parts.push(part);
     return part;
+  }
+
+  // a colourway (colourway.js) on these parts - null: as Blizzard made them; drawn at once
+  setColour(parts, way) {
+    for (const p of parts) p.opts.colour = way;
+    this.draw();
+  }
+
+  // a canvas texture painted again (the body's skin in another colourway): uploaded again
+  refreshTexture(src) {
+    const t = this.textures.get(src), gl = this.gl;
+    if (!t) return;
+    gl.bindTexture(gl.TEXTURE_2D, t.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    this.draw();
   }
 
   animated() {
@@ -1112,6 +1178,19 @@ class Viewer {
     return data;
   }
 
+  // a part's colourway colour for one of its parts ("armor", "glows", "particles", "ribbons": Colour.partColour)
+  // as the shaders take it, else null. An item glow's model is all glow.
+  lookOf(p, part) {
+    const way = p.opts.colour;
+    if (!way || !window.Colour) return null;
+    return Colour.uniform(Colour.partColour(way, p.opts.ghost && part === "armor" ? "glows" : part));
+  }
+  setLook(locOn, loc, k) {
+    const gl = this.gl;
+    gl.uniform1i(locOn, k ? 1 : 0);
+    if (k) gl.uniform4fv(loc, k);
+  }
+
   // a particle emitter's or ribbon's blend, as the client's: opaque and alpha-keyed write depth, the rest don't
   effectBlend(mode) {
     const gl = this.gl;
@@ -1137,6 +1216,7 @@ class Viewer {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.pbuf);
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
       this.effectBlend(d.blend);
+      this.setLook(this.pu.lookOn, this.pu.look, this.lookOf(p, "particles"));
       gl.uniform1i(this.pu.multi, multi);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, em.tex.tex);
       if (multi) em.more.forEach((t, i) => this.bindTexture(i ? gl.TEXTURE2 : gl.TEXTURE1, t, [true, true]));
@@ -1210,6 +1290,7 @@ class Viewer {
       }
       gl.bindBuffer(gl.ARRAY_BUFFER, this.pbuf);
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      this.setLook(this.pu.lookOn, this.pu.look, this.lookOf(p, "ribbons"));
       for (const l of rb.layers) {
         if (!l.tex || !l.tex.ready) continue;
         // a ribbon is see-through at least (an opaque material is drawn by alpha)
@@ -1322,6 +1403,9 @@ class Viewer {
         gl.uniform1i(this.u.uSkinned, 1);
         const fx = this.fxUniforms(p, now);
         gl.uniform1i(this.u.uFx, fx);
+        // a colourway: its armor's colour and its glows'
+        this.setLook(this.u.uLookAOn, this.u.uLookA, this.lookOf(p, "armor"));
+        this.setLook(this.u.uLookGOn, this.u.uLookG, this.lookOf(p, "glows"));
         gl.bindVertexArray(p.vao);
         for (const b of p.batches) {
           if (b.missing || !p.visible(b.geoset)) continue;
@@ -1371,6 +1455,8 @@ class Viewer {
           gl.uniform1f(this.u.uAlphaRef, b.blend === 1 ? 0.5 : (b.blend >= 2 ? 0.004 : -1));
           gl.uniform1i(this.u.uUnlit, b.unlit ? 1 : 0);
           gl.uniform1i(this.u.uOpaque, mode === 0 && tint[3] >= 1 ? 1 : 0);
+          // a batch that adds itself (add, blend-add, an unlit see-through one) or an item glow's: a glow
+          gl.uniform1i(this.u.uGlowBatch, p.opts.ghost || [3, 4, 7].includes(b.blend) || (b.unlit && b.blend >= 2) ? 1 : 0);
           if (fx) {
             // the texture's alpha is the opacity of any but an opaque batch; an alpha key cuts at its reference
             gl.uniform4fv(this.u.uFxModes, [b.blend ? 1 : 0, b.blend === 1 ? 0.5 : 0, 0, 0]);

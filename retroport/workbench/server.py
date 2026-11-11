@@ -339,19 +339,24 @@ class Workbench:
             cat = self.catalogs.get(e.get("source") or "")
             members = []
             for look in e["looks"]:
-                d = str(look.get("display") or "")
-                if not d or d == "0":
+                if not look.get("display"):
                     continue
+                # a piece is a look Install makes one item of: its key (catalog.look_key) - a colourway's apart from
+                # the look it was made from; "look" the display the 3D view shows (in "colour")
+                d = str(look.get("look_key") or look["display"])
                 if d not in members:
                     members.append(d)
                 if d in seen:
                     seen[d]["groups"].append(e["name"])
                     continue
                 row = cat.by_id.get(look.get("item")) if cat else None
+                name = look.get("name") or f"Look {look['display']}"
+                if look.get("colour"):
+                    name = f"{name} ({look.get('colour_name') or 'Custom'})"
                 # its set: the first basket set holding the look (its values the piece takes), none for an item
                 # of its own
-                p = {"display": d, "item": look.get("item"), "name": look.get("name") or f"Look {d}",
-                     "label": look.get("label") or "", "icon": look.get("icon") or 0, "quality": look.get("quality"),
+                p = {"display": d, "look": look["display"], "colour": look.get("colour"), "item": look.get("item"),
+                     "name": name, "label": look.get("label") or "", "icon": look.get("icon") or 0, "quality": look.get("quality"),
                      "inv": look.get("slot") or 0, "cls": row[C.F["cls"]] if row is not None else 0,
                      "sub": row[C.F["sub"]] if row is not None else 0, "source": e.get("source"),
                      "groups": [e["name"]], "group_key": in_set.get(d, ""), "entry": entries.get(d)}
@@ -361,7 +366,8 @@ class Workbench:
                 groups.append({"key": e["key"], "name": e["name"], "set": e["kind"] in IS.SET_KINDS, "pieces": members,
                                "label": e.get("label") or ""})
         return {"pieces": pieces, "groups": groups, "edits": IS.load(self.settings.data_dir),
-                "basket_sets": [{"key": e["key"], "name": e["name"], "pieces": [str(l["display"]) for l in e["looks"] if l.get("display")]}
+                "basket_sets": [{"key": e["key"], "name": e["name"],
+                                 "pieces": [str(l.get("look_key") or l["display"]) for l in e["looks"] if l.get("display")]}
                                 for e in plan["entries"] if e["kind"] in IS.SET_KINDS]}
 
     def look_names(self) -> dict:
@@ -470,7 +476,7 @@ class Workbench:
         basket = self.basket()
         plan = C.plan_basket(self.catalogs, items)
         ready = all(e["state"] == "ready" for e in plan["entries"])
-        looks = {str(l["display"]) for e in plan["entries"] for l in e["looks"] if l.get("display")}
+        looks = {C.look_stamp(l) for e in plan["entries"] for l in e["looks"] if l.get("display")}
         st = self.direct.status(looks if ready else None, {C.entry_key(e) for e in MT.basket_mounts(items)})
         st["mounts"] = len(MT.basket_mounts(items))
         last = st.get("last_install") or {}

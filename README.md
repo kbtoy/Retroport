@@ -39,6 +39,13 @@ A 32-bit client on the same server takes what the x64 Workbench installs instead
   mount's banner, a spectral mount's ghostly shading, a Void-Scarred mount's scrolling void. Only
   versions a player can wear are listed: retail's locked "VFX unlock" looks and Blizzard's internal
   "[DNT]" sets are left out.
+- **Your own colours** - under an item's or a set's preview, *Make a colourway* of the version shown
+  (Elite, Mythic...): a colour wheel, Brightness and Dye, presets (Crimson, Fel, Frost, Void...), and
+  which parts take the colour - armor, glows, particles, ribbons, each the colourway's colour, its own,
+  or as Blizzard made it. The 3D view recolours as you go. Put it in the basket and Install makes it an
+  extra item beside the version it was made from ("Galactic Gladiator's Silk Cord (Fel)"), with a look
+  of its own that the client draws in your colours wherever it shows - worn, at character select, on
+  other players (`/console wxlItemColours 0` in chat shows them as made).
 - **Mounts** - all of retail's mounts (about 1,700), ground and flying, each in 3D with its looks;
   the mounts of one model in other skins are one card, every version a click away under the preview
   like a set's; put them in the basket like items. In game each is a mount spell like the epic ones,
@@ -249,6 +256,9 @@ shared code and older command-line tools ([docs/command-line-tools.md](docs/comm
   **[WoW Blender Studio](https://gitlab.com/skarnproject/blender-wow-studio)** by **Skarn** - the
   shader tables the 3D preview follows; **[Conjure](https://github.com/TheDaveCalaz/Conjure)** by
   **TheDaveCalaz** - code retroport adapts.
+- **Kirazul**'s [Eclipse](https://github.com/Kirazul/Eclipse) - the colourways follow its weapon and gear
+  colours: the hue wheel with Brightness and Dye, named presets, and the recolour that keeps each texel's
+  colourfulness so only what was coloured takes the colour (our own code, from its design).
 - The earlier Workbench (`main`) was a front end to **Kirazul**'s
   [wow-retail-backport](https://github.com/Kirazul/wow-retail-backport) and **TheDaveCalaz**'s
   [Equip Plus](https://github.com/TheDaveCalaz/wxl-equip-plus) - thank you to both.

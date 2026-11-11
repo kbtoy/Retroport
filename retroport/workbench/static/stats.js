@@ -643,7 +643,8 @@ function renderPreview() {
   }
   if (!SG.pb.v || SG.shown === p.display) return;
   SG.shown = p.display;
-  loadDisplay(SG.pb, p.display, p.inv, p.source);
+  SG.pb.colour = p.colour || null;                  // a colourway's piece in its colours
+  loadDisplay(SG.pb, p.look ?? p.display, p.inv, p.source);
 }
 
 // -- item sets ---------------------------------------------------------------------------------

@@ -8,7 +8,8 @@ and item sets with their set bonuses. The page works the numbers out (WotLK's ow
 
     {"global": {field: value},                every piece's value unless its set or the piece says otherwise
      "groups": {"<basket key>": {field: value, "broken": bool}},   a basket set's own values
-     "pieces": {"<retail display>": {...}},    a piece's own values (and its worked-out stats)
+     "pieces": {"<look key>": {...}},          a piece's own values (and its worked-out stats); the key its
+                                               retail display - "<display>~<colourway>" for a colourway's
      "sets":   [{"key", "name", "pieces": [display...], "bonuses": [[pieces needed, spell]]}]}
 
 A basket set's pieces take its values (item level, required level, quality, binding, armour type, the
@@ -97,13 +98,13 @@ def save(data_dir: str, edits: dict) -> None:
 
 
 def groups_of(plan: dict) -> dict[str, str]:
-    """retail display -> the basket key of the first set in ``plan`` (catalog.plan_basket) holding it;
-    a look in no set (an item of its own) has none."""
+    """A look's key (catalog.look_key: its display, a colourway's with its key) -> the basket key of the first
+    set in ``plan`` (catalog.plan_basket) holding it; a look in no set (an item of its own) has none."""
     out: dict[str, str] = {}
     for e in plan.get("entries") or []:
         if e.get("kind") in SET_KINDS:
             for look in e.get("looks") or []:
-                d = str(look.get("display") or "")
+                d = str(look.get("look_key") or look.get("display") or "")
                 if d and d != "0":
                     out.setdefault(d, e["key"])
     return out

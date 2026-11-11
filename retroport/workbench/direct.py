@@ -266,7 +266,7 @@ class Direct:
             return False
         os.makedirs(os.path.join(self.work, "out", "sql"), exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        record = {"time": stamp, "looks": sorted(str(d) for _i, d, _l in looks), "build": self.retail_build(),
+        record = {"time": stamp, "looks": sorted({C.look_stamp(l) for _i, _d, l in looks}), "build": self.retail_build(),
                   "client": self.cfg.client_data, "steps": {},
                   "mounts": sorted(C.entry_key(e) for e in rides)}
 
@@ -280,6 +280,10 @@ class Direct:
         passed("read")
         self._step("collect")
         pieces, files, summary = self.collect(looks, rows, glows)
+        colours = RP.colour_table(pieces)            # the colourways the client recolours
+        if colours:
+            files.made[RP.COLOUR_TABLE] = colours
+            self.say(f"   {sum(1 for p in pieces if p.colour)} colourway(s): {RP.COLOUR_TABLE}")
         passed("collect")
         self._step("mounts")
         self.mount_built = None
@@ -295,7 +299,7 @@ class Direct:
         passed("sql")
         record["summary"] = summary | {"items": len(pieces), "sql": sql, "mounts": len(files.rides),
                                        "mounts_sql": mounts_sql}
-        record["entries"] = {str(p.display): p.entry for p in pieces}
+        record["entries"] = {p.look_key or str(p.display): p.entry for p in pieces}
         J.save_json(os.path.join(self.work, "out", "build.json"), record)
         if not install:
             self.say("Built. Install puts the patch in your client.")
@@ -333,7 +337,8 @@ class Direct:
         return path
 
     def looks_of(self, plan: dict) -> list[tuple[int, int, dict]]:
-        """(retail item, display, look) for each look the plan builds, once each."""
+        """(retail item, display, look) for each look the plan builds, once each - a colourway's apart from the
+        look it was made from (its look key)."""
         out, seen = [], set()
         for e in plan.get("entries") or []:
             for l in e.get("looks") or []:
@@ -343,8 +348,9 @@ class Direct:
                 if not item:
                     self.say(f"   {l.get('name') or display}: no retail item shows this look - left out")
                     continue
-                if (item, display) not in seen:
-                    seen.add((item, display))
+                key = (item, l.get("look_key") or str(display))
+                if key not in seen:
+                    seen.add(key)
                     out.append((item, display, l))
         return out
 
@@ -448,11 +454,19 @@ class Direct:
                 if r is None:
                     self.say(f"   {look.get('name') or item}: retail has no Item row for {item} - left out")
                     continue
-                entry = RP.entry_for(item, modifier, display == default or not versions, taken, ids["spare"])
                 label = "" if display == default else C.MODIFIERS.get(modifier, "")
-                pieces.append(RP.Piece(entry, item, display, modifier, look.get("name") or f"Item {item}",
+                name = look.get("name") or f"Item {item}"
+                way = look.get("colour") if isinstance(look.get("colour"), dict) else None
+                if way:                                  # a colourway: an item of its own, named after its colours
+                    entry = RP.colour_entry(item, modifier, way.get("key") or "", ids["spare"])
+                    cname = look.get("colour_name") or way.get("name") or "Custom"
+                    name, label = f"{name} ({cname})", " - ".join(x for x in (label, cname) if x)
+                else:
+                    entry = RP.entry_for(item, modifier, display == default or not versions, taken, ids["spare"])
+                pieces.append(RP.Piece(entry, item, display, modifier, name,
                                        int(look.get("quality") if look.get("quality") is not None else 1),
-                                       **RP.item_fields(r), label=label))
+                                       **RP.item_fields(r), label=label, look_key=look.get("look_key") or str(display),
+                                       colour=way))
                 if display in dbc_displays:
                     self.say(f"!  {look.get('name')}: display {display} is a row of your client's ItemDisplayInfo.dbc "
                              f"(3.3.5's own or an older tool's) - {edition.CLIENT_NAME} draws that row, not retail's")
@@ -679,7 +693,7 @@ class Direct:
         stats = []
         for p in pieces:
             row = dict(zip(RP.COLUMNS, p.values()))
-            stats += IS.updates(edits, {"item": {str(p.display): p.entry}}, {p.entry: row}, {}, groups=groups)
+            stats += IS.updates(edits, {"item": {p.look_key or str(p.display): p.entry}}, {p.entry: row}, {}, groups=groups)
         if stats:
             text += f"\n-- Retroport Workbench, the Stats step: levels, stats, armor, damage, sockets ({len(stats)} items)\n" + \
                     "\n".join(stats) + "\n"
@@ -688,7 +702,7 @@ class Direct:
         with open(path + ".part", "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
         os.replace(path + ".part", path)
-        ids["owned"] = sorted(set(owned) | {(p.entry, p.display) for p in pieces})
+        ids["owned"] = sorted(set(owned) | {(p.entry, p.shown) for p in pieces})
         self._save_ids(ids)
         self.say(f"   wrote {path} ({len(pieces)} items" + (f", {len(stats)} with stats" if stats else "") + ")")
         return path

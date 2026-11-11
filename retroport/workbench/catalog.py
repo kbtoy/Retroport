@@ -507,7 +507,25 @@ def looks_of(pieces: list[dict]) -> list[dict]:
 
 
 def entry_key(e: dict) -> str:
-    return f"{e.get('kind')}:{e.get('source')}:{e.get('id')}"
+    """A basket entry's key: its kind, source and id - and a colourway's key, a colourway being an entry of its own."""
+    way = e.get("colour") if isinstance(e.get("colour"), dict) else None
+    return f"{e.get('kind')}:{e.get('source')}:{e.get('id')}" + (f"~{way.get('key')}" if way else "")
+
+
+def look_key(display, way: dict | None = None) -> str:
+    """A look Install makes one item of: its display - and a colourway's key, a colourway an item of its own."""
+    return f"{display}~{way['key']}" if way and way.get("key") else str(display)
+
+
+def look_stamp(look: dict) -> str:
+    """A planned look as a build records it: its key, and a colourway's colours (new colours: built again)."""
+    key = look.get("look_key") or str(look.get("display") or "")
+    way = look.get("colour")
+    if not isinstance(way, dict):
+        return key
+    import hashlib
+    blob = json.dumps({"colour": way.get("colour"), "parts": way.get("parts"), "name": way.get("name")}, sort_keys=True)
+    return f"{key}#{hashlib.sha1(blob.encode()).hexdigest()[:10]}"
 
 
 def plan_basket(catalogs: dict[str, Catalog], basket: list[dict], installed: list[dict] | None = None) -> dict:
@@ -528,10 +546,20 @@ def plan_basket(catalogs: dict[str, Catalog], basket: list[dict], installed: lis
         skip = {str(d) for d in e.get("leave_out") or []}             # pieces the user left out of it
         left = [l for l in looks if str(l.get("display")) in skip]
         looks = [l for l in looks if str(l.get("display")) not in skip]
+        # a colourway (colourway.js): an item of its own for each of its looks - one version of an item (its
+        # "look"), every piece of a set - in its colours
+        way = e.get("colour") if isinstance(e.get("colour"), dict) else None
+        if way and e.get("kind") == "item" and e.get("look"):
+            looks = [l for l in looks if l["display"] == e["look"]][:1]
+        for l in looks:
+            l["look_key"] = look_key(l["display"], way)
+            if way:
+                l["colour"] = way
+                l["colour_name"] = way.get("name") or "Custom"
         out = {k: e.get(k) for k in ("kind", "source", "id", "name", "icon", "quality", "sub")} | {
             "key": entry_key(e), "looks": looks, "left_out": left, "items": len(ids),
             "state": "loading" if cat is None else "ready" if looks or left else "missing"}
-        mine = list(dict.fromkeys(l["display"] for l in looks if l["display"]))
+        mine = list(dict.fromkeys(l["look_key"] for l in looks if l["display"]))
         others = list(dict.fromkeys(first[d] for d in mine if d in first))
         out["shares"] = [entries[i]["name"] for i in others]
         out["covered"] = bool(mine) and all(d in first for d in mine)   # nothing of its own

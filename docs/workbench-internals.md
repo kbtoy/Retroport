@@ -216,6 +216,41 @@ refuses a whole UPDATE with one value out of range. Item sets are laid out on th
 installed: they need rows in the client's and the server's `ItemSet.dbc`, which Install doesn't make
 yet (`itemstats.set_rows` / `itemset_dbc` can).
 
+## Colourways
+
+A player's own colours for a version of an item or a set (after Kirazul's Eclipse - its weapon and gear
+colours - our own code from its design). The maths is `static/colour.js` (`Colour.apply`), the same in GLSL
+in `viewer.js` (`RECOLOUR`): a colour is a hue, a saturation, a brightness (0-255, 128 as made) and a dye;
+a texel goes to OKLab, keeps its lightness (times the brightness), takes the hue, and keeps its
+colourfulness relative to the most its lightness and hue allow in sRGB (found by bisection) times 1.25
+and the saturation - grey stays grey, so only what was coloured changes - dye pushing it to the colour's
+own saturation; near white stays whiter (`1 - 0.35 smoothstep(0.8, 1, L)`), and an overbright colour is
+recoloured at 1 and scaled back. A colourway (`colourway.js`) is `{key, name, colour, parts}`, each of
+armor, glows, particles and ribbons "same" (the colourway's colour), "off" (as made) or its own colour.
+
+- **The page**: under an item's or a set's preview, the *Colours* section makes a colourway of the version
+  shown (`colourSection`, `colourEditor`): the wheel (each point drawn as the colour it gives), Brightness,
+  Dye, ten presets, the parts' chips. The 3D view takes it at once (`previewColour`, `Viewer.setColour`):
+  a model's lit colour by its armor colour, the glow a combiner adds and a batch that adds itself (blend
+  3/4/7, an unlit see-through one) and an item glow's models by its glows', emitters and ribbons by
+  theirs; the body's painted armor and a cloak's cape are composited again in its armor colour (canvas,
+  `Colour.image`, memoised by colour).
+- **The basket**: a colourway is an entry of its own - `{kind, source, id, colour}` (an item's also its
+  `look`, the version's display) - keyed `kind:source:id~<colourway key>` (`catalog.entry_key`). Its looks
+  (`plan_basket`) carry the colourway and a look key `display~<key>` (`catalog.look_key`), so it is never
+  "covered" by the plain version; a build's record keeps `look_stamp` (the key and a hash of the colours:
+  new colours, built again).
+- **Install**: each colourway look is an item of its own (`retailpack.colour_entry`: numbered from
+  16,000,000 like the spare looks, kept per item, modifier and colourway in `ids.json`), named after its
+  colours ("Galactic Gladiator's Silk Cord (Fel)"), its description the version and colourway's names;
+  the Stats step keys it by its look key. Its item_template row has a display id of its own
+  (`retailpack.colour_display`: its entry, past retail's display ids and 3.3.5's; `Piece.shown`). The
+  patch holds `DBFilesClient\WxlItemColours.txt` (`retailpack.colour_table`): a line a colourway - its own
+  display, the retail display it recolours, then its armor's, glows', particles' and ribbons' colours, each
+  `hue,saturation,brightness,dye` or `-`. The client draws that display as the retail one, recoloured,
+  wherever the item is drawn (worn, character select, inspect, another player): all it has there is the
+  display id.
+
 ## The 32-bit client
 
 A client folder with `WowClient32.exe` (`edition.CLIENT_EXE`: the 32-bit 3.3.5 client built from

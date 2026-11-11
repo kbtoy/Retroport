@@ -435,9 +435,71 @@ def entry_for(item: int, modifier: int, default: bool, taken: set[int], spare: d
     return spare[key]
 
 
+def colour_entry(item: int, modifier: int, way: str, spare: dict[str, int]) -> int:
+    """The item_template entry of a colourway (``way``: its key) of ``item``'s look with ``modifier``: an item of
+    its own beside the look it was made from, numbered from 16,000,000 like the spare looks (kept between installs)."""
+    key = f"{item}:{modifier}:{way}"
+    if key not in spare:
+        used = set(spare.values())
+        n = SPARE
+        while n in used:
+            n += 1
+        if n > ENTRY_MAX:
+            raise ValueError("no item_template entries left for colourways")
+        spare[key] = n
+    return spare[key]
+
+
+# The colourways' table the client reads (its equipment recolour): a line a colourway - its own display id
+# (the one its item_template row has), the retail display it is a recolour of, then its armor's, glows',
+# particles' and ribbons' colours, tab-separated, each "hue,saturation,brightness,dye" (hue in degrees,
+# saturation 0-1, brightness 0-255 with 128 as made, dye 0-1) or "-" as Blizzard made it. "#" a comment.
+# The client draws the display as the retail one it names, recoloured - wherever the item is drawn (worn,
+# character select, inspect, other players), since all it has there is the display id.
+COLOUR_TABLE = "DBFilesClient\\WxlItemColours.txt"
+COLOUR_PARTS = ("armor", "glows", "particles", "ribbons")
+
+
+def colour_display(entry: int) -> int:
+    """A colourway's own display id: its item's entry (16,000,000 on, past retail's display ids and 3.3.5's)."""
+    return entry
+
+
+def part_colour(way: dict, part: str) -> dict | None:
+    """A part's colour in a colourway (colour.js's Colour.partColour): its own, the colourway's, or None ("off")."""
+    p = (way.get("parts") or {}).get(part, "same")
+    if p == "off":
+        return None
+    return way.get("colour") if p == "same" else p if isinstance(p, dict) else None
+
+
+def colour_table(pieces: list) -> bytes | None:
+    """``COLOUR_TABLE`` for the pieces that are colourways (None when none is)."""
+    def num(v, lo, hi, default):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return default
+        return min(max(v, lo), hi) if v == v else default
+
+    def fmt(k):
+        if not isinstance(k, dict):
+            return "-"
+        vals = (num(k.get("hue"), 0, 360, 0) % 360, num(k.get("sat"), 0, 1, 1), num(k.get("light"), 0, 255, 128),
+                num(k.get("dye"), 0, 1, 0))
+        return ",".join(f"{v:.4g}" for v in vals)
+    lines = [f"{colour_display(p.entry)}\t{p.display}\t" + "\t".join(fmt(part_colour(p.colour, part)) for part in COLOUR_PARTS)
+             for p in pieces if isinstance(getattr(p, "colour", None), dict)]
+    if not lines:
+        return None
+    head = ["# Retroport Workbench colourways: display, the retail display it recolours, then armor, glows, particles, ribbons",
+            "# each hue (degrees),saturation (0-1),brightness (0-255, 128 as made),dye (0-1) - or - as made"]
+    return ("\r\n".join(head + lines) + "\r\n").encode("ascii")
+
+
 @dataclass
 class Piece:
-    """One item the server gets: a retail item's look (display) under its entry."""
+    """One item the server gets: a retail item's look (display) under its entry - or a colourway of one."""
     entry: int
     item: int
     display: int
@@ -451,9 +513,16 @@ class Piece:
     sheath: int
     sound: int
     label: str = ""                         # the look's name when it isn't the item's default ("Mythic")
+    look_key: str = ""                      # catalog.look_key: the display, a colourway's with its key
+    colour: dict | None = None              # a colourway (colour.js): the client recolours the item
+
+    @property
+    def shown(self) -> int:
+        """The display id the item_template row has: a colourway's own (``colour_display``), else the retail one."""
+        return colour_display(self.entry) if isinstance(self.colour, dict) else self.display
 
     def values(self) -> list:
-        return [self.entry, self.cls, self.sub, self.sound, self.name, self.display, min(max(self.quality, 0), 7),
+        return [self.entry, self.cls, self.sub, self.sound, self.name, self.shown, min(max(self.quality, 0), 7),
                 self.inventory, -1, -1, 1, 0, self.material, self.sheath, 0, 1, 0, self.label]
 
 
@@ -487,7 +556,7 @@ def item_sql(pieces: list[Piece], owned: list[tuple[int, int]], build: str, made
              "-- each item shows retail's own look: its displayid is retail's ItemDisplayInfo id, which the x64",
              "-- client draws from retail's tables (a stock 3.3.5 client shows these items without a model)",
              "-- entries: a retail item's own id for its default look; its other looks (modifier + 1) * 1,000,000 + id"]
-    pairs = sorted(set(owned) | {(p.entry, p.display) for p in pieces})
+    pairs = sorted(set(owned) | {(p.entry, p.shown) for p in pieces})
     if pairs:
         lines.append("DELETE FROM `item_template` WHERE (`entry`, `displayid`) IN (" +
                      ",".join(f"({e},{d})" for e, d in pairs) + ");")
