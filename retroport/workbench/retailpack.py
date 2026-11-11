@@ -450,7 +450,7 @@ def colour_entry(item: int, modifier: int, way: str, spare: dict[str, int]) -> i
     return spare[key]
 
 
-# The colourways' table the x64 client reads (its equipment recolour): a line a colourway - its own display id
+# The colourways' table the client reads (its equipment recolour): a line a colourway - its own display id
 # (the one its item_template row has), the retail display it is a recolour of, then its armor's, glows',
 # particles' and ribbons' colours, tab-separated, each "hue,saturation,brightness,dye" (hue in degrees,
 # saturation 0-1, brightness 0-255 with 128 as made, dye 0-1) or "-" as Blizzard made it. "#" a comment.
