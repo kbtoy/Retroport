@@ -160,14 +160,31 @@ async function openItem(id, back = null) {
   const showIds = (appearance, display) => ids.replaceChildren(...kv("Item", d.id), ...kv("Appearance", appearance), ...kv("Display", display));
   showIds(d.appearance, d.display);
   const preview = d.display ? itemPreview(d.display, d.slot) : null;
+  // the version shown: what a colourway is made of
+  let cur = d.appearances.find(a => a.appearance === d.appearance) ||
+            {display: d.display, label: "", modifier: 0, appearance: d.appearance, icon: d.icon};
+  const versionName = a => d.appearances.length > 1 ? (a.label || S.meta.modifiers[a.modifier] || "") : "";
+  const colours = preview && preview.pb.v && d.display && window.Colour ? colourSection({
+    what: d.name, version: () => versionName(cur), show: way => previewColour(preview.pb, way),
+    entry: way => ({kind: "item", source: S.source, id: d.id, look: cur.display, look_label: versionName(cur),
+                    name: `${d.name} (${[versionName(cur), way.name].filter(Boolean).join(" - ")})`, icon: cur.icon || d.icon,
+                    quality: d.quality, sub: itemKind(d), colour: copyWay(way)}),
+    saved: () => S.basket.filter(e => e.kind === "item" && e.source === S.source && e.id === d.id && e.colour && e.look === cur.display),
+  }) : null;
   if (d.appearances.length > 1) {
     const chips = versionChips(d.appearances.map(a => ({
       label: a.label || S.meta.modifiers[a.modifier] || `Modifier ${a.modifier}`, icon: icon(a.icon, d.quality, "xs"),
       title: `appearance ${a.appearance} · display ${a.display}`, on: a.appearance === d.appearance,
-      pick: () => { showIds(a.appearance, a.display); if (preview && a.display) loadDisplay(preview.pb, a.display, d.slot); }})));
+      pick: () => {
+        cur = a;
+        showIds(a.appearance, a.display);
+        if (preview && a.display) loadDisplay(preview.pb, a.display, d.slot);
+        if (colours) colours.switched();
+      }})));
     if (!(preview && preview.pb.add(chips))) body.push(section("Versions", chips));
   }
   if (preview) body.push(preview);
+  if (colours) body.push(colours);
   body.push(section("Ids", ids));
   if (d.sets.length) {
     body.push(section(`In ${d.sets.length} transmog set${d.sets.length > 1 ? "s" : ""}`, el("div", {class: "plist"},
@@ -295,9 +312,16 @@ async function openSet(id, kind = "transmog") {
     }
     if (worn.length) preview = characterSection(worn);
   }
-  // the preview first (its versions under it, so switching keeps it in view), then the pieces
+  // the preview first (its versions under it, so switching keeps it in view), its colourways, then the pieces
   if (versions && !(preview && preview.pb && preview.pb.add(versions))) body.push(section("Versions", versions));
   if (preview) body.push(preview);
+  if (kind !== "itemset" && preview && preview.pb && preview.pb.v && window.Colour) {
+    body.push(colourSection({
+      what: d.name, version: () => d.label || "", show: way => previewColour(preview.pb, way),
+      entry: way => ({kind: "set", source: S.source, id: d.id, name: `${d.name} (${[d.label, way.name].filter(Boolean).join(" - ")})`,
+                      icon: d.icon, sub: [d.label, d.group].filter(Boolean).join(" · "), colour: copyWay(way)}),
+      saved: () => S.basket.filter(e => e.kind === "set" && e.source === S.source && e.id === d.id && e.colour)}));
+  }
   body.push(list, el("div", {class: "actions"}, actions));
   showDrawer(body);
 }
@@ -464,7 +488,8 @@ function markSelected() {
 }
 
 // ---------------------------------------------------------------------------- basket
-const keyOf = e => `${e.kind}:${e.source}:${e.id}`;
+// a basket entry's key (catalog.entry_key): a colourway of a version is an entry of its own
+const keyOf = e => `${e.kind}:${e.source}:${e.id}` + (e.colour ? `~${e.colour.key}` : "");
 function inBasket(k) { return S.basket.some(e => keyOf(e) === k); }
 function addButton(k, make) {
   const b = el("button", {class: "add" + (inBasket(k) ? " in" : ""), "data-key": k, title: "Add to basket",
@@ -1012,7 +1037,20 @@ function versionChips(list) {
   return el("div", {class: "chips pv-versions", role: "group", "aria-label": "Versions"}, chips);
 }
 
-// One display: its models alone; with none, the piece on a character (a cloak seen from behind).
+// A colourway on a preview: what it drew takes it at once (models, glows, particles, ribbons), the body's
+// painted armor once composited again. way: a colourway (colourway.js), null for the look as made.
+function previewColour(pb, way) {
+  pb.colour = way;
+  if (!pb.v) return;
+  pb.v.setColour(pb.parts || [], way);
+  if (pb.repaint) {
+    clearTimeout(pb.repaintTimer);
+    pb.repaintTimer = setTimeout(() => pb.repaint(way), 120);
+  }
+}
+
+// One display: its models alone; with none, the piece on a character (a cloak seen from behind) - in the
+// preview's colourway (pb.colour) when it has one.
 function loadDisplay(pb, display, slot, from = null) {
   pb.load(async () => {
     const v = pb.v, token = ++PV.token, source = from || S.source;
@@ -1021,11 +1059,12 @@ function loadDisplay(pb, display, slot, from = null) {
       const p = await api("/api/preview", {source, display, race: PV.race, sex: PV.sex, slot: slot || 0});
       if (token !== PV.token) return;
       pb.textures.replaceChildren(...p.body.map(textureThumb(source)));
+      pb.parts = []; pb.repaint = null;
       const cape = slot === BACK && p.row && p.row.model_types[0] === CAPE && p.row.materials[0];
       if (!p.models.length && (cape || p.body.length)) {
         const picker = pb.controls.querySelector(".pv-pick");
         if (picker) picker.hidden = false;
-        const got = await dress(v, [{display, slot}], token, source);
+        const got = await dress(v, [{display, slot}], token, source, pb);
         if (!got) return;
         v.fit(cape ? "back" : "front");
         v.draw();
@@ -1041,9 +1080,9 @@ function loadDisplay(pb, display, slot, from = null) {
       for (const m of p.models) {
         // shoulders: the left one (position 0) on the wearer's left (+Y), the right one on the right
         const offset = slot === 3 && m.position >= 0 ? [0, m.position === 0 ? 0.21 : -0.21, 0] : [0, 0, 0];
-        const part = v.add(m.mesh, {texUrl: texUrl(source), offset, particle: p.particle,
+        const part = v.add(m.mesh, {texUrl: texUrl(source), offset, particle: p.particle, colour: pb.colour,
                                     visible: id => (m.type === 1 ? collectionShows : attachedShows)(slot, p.row, id)});
-        addGlows(v, part, p.glows, source);
+        pb.parts.push(part, ...addGlows(v, part, p.glows, source, pb.colour));
       }
       v.fit(HELD.includes(slot) ? "held" : "front", slot);
       v.canvas.hidden = !p.models.length;
@@ -1060,12 +1099,14 @@ function loadDisplay(pb, display, slot, from = null) {
 function notes(info, lines) { for (const l of lines || []) info.append(el("div", {class: "warnline"}, l)); }
 // A display's retail item glows (its ItemVisual: what the client hangs on the item, /api/preview's
 // glows) on an item model's attachment points - each where the model has that point, as the client's
-// ApplyItemVisual does on every model of the item.
-function addGlows(v, part, glows, source) {
+// ApplyItemVisual does on every model of the item. A colourway's glows colour them. Returns the parts added.
+function addGlows(v, part, glows, source, colour = null) {
+  const out = [];
   for (const g of glows || []) {
     if (!(part.mesh.attachments || []).some(a => a[0] === g.point)) continue;
-    v.add(g.mesh, {texUrl: texUrl(source), attach: {part, id: g.point, scale: g.scale}, ghost: true});
+    out.push(v.add(g.mesh, {texUrl: texUrl(source), attach: {part, id: g.point, scale: g.scale}, ghost: true, colour}));
   }
+  return out;
 }
 
 // One item's preview section (an item's panel).
@@ -1143,51 +1184,73 @@ function shows(a, id, hair) {
   const want = g in a ? a[g] : 1;
   return want >= 0 && v === want;
 }
-// The skin as the client composites it: the body's layers, then each piece's section textures.
-async function compositeSkin(body, outfit, source) {
+// The skin as the client composites it: the body's layers, then each piece's section textures - the pieces'
+// in a colourway's armor colour. The canvas's paint(way) composites it again in another.
+async function compositeSkin(body, outfit, source, way = null) {
   const L = body.layout, c = document.createElement("canvas");
   c.width = L.width; c.height = L.height;
-  const draws = body.skin.map(([sec, fdid]) => [sec, `/tex/bfa/${fdid}.png`]);
+  const draws = body.skin.map(([sec, fdid]) => [sec, `/tex/bfa/${fdid}.png`, false]);
   for (const slot of outfit.dress_order) for (const pc of outfit.pieces.filter(p => p.slot === slot))
-    for (const t of pc.body) draws.push([t.section, `/tex/${source}/${t.fdid}.png`]);
+    for (const t of pc.body) draws.push([t.section, `/tex/${source}/${t.fdid}.png`, true]);
   const imgs = await Promise.all(draws.map(([, u]) => loadImage(u).catch(() => null)));
-  const ctx = c.getContext("2d");
-  draws.forEach(([sec], i) => {
-    const img = imgs[i];
-    if (!img) return;
-    if (sec < 0) ctx.drawImage(img, 0, 0, L.width, L.height);
-    else { const r = L.sections[sec]; if (r) ctx.drawImage(img, r[0], r[1], r[2], r[3]); }
-  });
+  c.paint = w => {
+    const k = window.Colour ? Colour.partColour(w, "armor") : null, ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, L.width, L.height);
+    draws.forEach(([sec, , piece], i) => {
+      let img = imgs[i];
+      if (!img) return;
+      if (piece && k) img = Colour.image(img, k);
+      if (sec < 0) ctx.drawImage(img, 0, 0, L.width, L.height);
+      else { const r = L.sections[sec]; if (r) ctx.drawImage(img, r[0], r[1], r[2], r[3]); }
+    });
+  };
+  c.paint(way);
   return c;
 }
 // The viewer dressed: the race's body, its skin composited, then each piece's geosets and models.
-// pieces: [{display, slot, name?}]. Returns what it drew, or null when a newer load took over.
-async function dress(v, pieces, token, from = null) {
-  const source = from || S.source, race = PV.race, sex = PV.sex;
+// pieces: [{display, slot, name?}]; pb: the preview box - its colourway (pb.colour) on the pieces, and what
+// takes a new one (pb.parts, pb.repaint). Returns what it drew, or null when a newer load took over.
+async function dress(v, pieces, token, from = null, pb = null) {
+  const source = from || S.source, race = PV.race, sex = PV.sex, way = pb ? pb.colour : null;
   const [body, outfit] = await Promise.all([bodyOf(race, sex),
     api("/api/outfit", {source, race, sex, items: pieces.map(p => `${p.display}:${p.slot}`).join(",")})]);
   if (token !== PV.token) return null;
-  const skin = await compositeSkin(body, outfit, source);
+  const skin = await compositeSkin(body, outfit, source, way);
+  const cape = outfit.pieces.find(p => p.cape);
+  // a cloak's cape texture, in the colourway's armor colour
+  const capeImg = cape ? await loadImage(`/tex/${source}/${cape.cape}.png`).catch(() => null) : null;
+  const capeCanvas = capeImg ? el("canvas", {width: capeImg.width, height: capeImg.height}) : null;
+  const paintCape = w => {
+    if (!capeCanvas) return;
+    const k = window.Colour ? Colour.partColour(w, "armor") : null, x = capeCanvas.getContext("2d");
+    x.clearRect(0, 0, capeCanvas.width, capeCanvas.height);
+    x.drawImage(k ? Colour.image(capeImg, k) : capeImg, 0, 0);
+  };
+  paintCape(way);
   if (token !== PV.token) return null;
   const worn = wornGeosets(body, outfit);
-  const cape = outfit.pieces.find(p => p.cape);
   v.clear();
   const types = {1: skin};
   if (body.hair) types[6] = `/tex/bfa/${body.hair}.png`;
   if (body.skin_extra) types[8] = `/tex/bfa/${body.skin_extra}.png`;
-  if (cape) types[2] = `/tex/${source}/${cape.cape}.png`;
+  if (capeCanvas) types[2] = capeCanvas;
   const bodyPart = v.add(body.mesh, {texUrl: texUrl("bfa"), types, visible: id => shows(worn, id, true)});
+  const parts = [];
   let models = 0;
   for (const slot of outfit.dress_order) for (const pc of outfit.pieces.filter(p => p.slot === slot)) for (const m of pc.models) {
     if (m.type === 1) {
-      v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, particle: pc.particle,
-                     visible: id => collectionShows(slot, pc.row, id)});
+      parts.push(v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, particle: pc.particle, colour: way,
+                                visible: id => collectionShows(slot, pc.row, id)}));
     } else if (m.attach >= 0) {
       const part = v.add(m.mesh, {texUrl: texUrl(source), attach: {part: bodyPart, id: m.attach}, particle: pc.particle,
-                                  visible: id => attachedShows(slot, pc.row, id)});
-      addGlows(v, part, pc.glows, source);
+                                  colour: way, visible: id => attachedShows(slot, pc.row, id)});
+      parts.push(part, ...addGlows(v, part, pc.glows, source, way));
     }
     models++;
+  }
+  if (pb) {
+    pb.parts = parts;
+    pb.repaint = w => { skin.paint(w); v.refreshTexture(skin); paintCape(w); if (capeCanvas) v.refreshTexture(capeCanvas); v.draw(); };
   }
   v.canvas.hidden = false;
   const name = d => (pieces.find(p => p.display === d) || {}).name || `display ${d}`;
@@ -1203,7 +1266,7 @@ function characterSection(pieces) {
     const v = pb.v, token = ++PV.token;
     pb.info.textContent = "Dressing…";
     try {
-      const got = await dress(v, pieces, token);
+      const got = await dress(v, pieces, token, null, pb);
       if (!got) return;
       v.fit("front");
       v.draw();
