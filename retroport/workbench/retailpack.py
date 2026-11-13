@@ -61,26 +61,41 @@ ENTRY_MAX = 16_777_215
 MPQ_LIMIT = 3_900_000_000                   # MPQ v1's offsets are 32-bit
 
 
+# The x64 client's log line for a folder it opened as an archive (SFile2-Core.cpp / NativeStorage.cpp, retail
+# 85b9b99, 2026-11-13): a client with it reads a folder named like a patch MPQ (Data\patch-Q.MPQ\) in its place
+FOLDER_MARK = b"folder-archive: "
+
 _MERGES: dict[tuple, bool] = {}
 
 
-def merges_path_tables(client_dir: str) -> bool | None:
-    """Whether the client's program (``edition.CLIENT_EXE``) reads every archive's path tables (``MERGE_MARK`` in it);
-    None without an exe to read. Kept per exe (path, size, time)."""
+def _exe_has(client_dir: str, mark: bytes) -> bool | None:
+    """Whether the client's program (``edition.CLIENT_EXE``) holds ``mark``; None without an exe to read. Kept per
+    exe (path, size, time) and mark."""
     from . import edition
     exe = os.path.join(client_dir or "", edition.CLIENT_EXE)
     try:
         st = os.stat(exe)
     except OSError:
         return None
-    key = (os.path.normcase(exe), st.st_size, st.st_mtime_ns)
+    key = (os.path.normcase(exe), st.st_size, st.st_mtime_ns, mark)
     if key not in _MERGES:
         try:
             with open(exe, "rb") as fh:
-                _MERGES[key] = MERGE_MARK in fh.read()
+                _MERGES[key] = mark in fh.read()
         except OSError:
             return None
     return _MERGES[key]
+
+
+def merges_path_tables(client_dir: str) -> bool | None:
+    """Whether the client's program reads every archive's path tables (``MERGE_MARK`` in it); None without an exe."""
+    return _exe_has(client_dir, MERGE_MARK)
+
+
+def reads_folder_archives(client_dir: str) -> bool | None:
+    """Whether the client's program opens a folder named like a patch MPQ as one (``FOLDER_MARK``); None without
+    an exe."""
+    return _exe_has(client_dir, FOLDER_MARK)
 
 
 def patch_for(client_dir: str) -> str:

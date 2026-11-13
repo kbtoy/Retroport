@@ -416,3 +416,73 @@ def test_a_skin_another_model_shares_goes_in_under_this_ones_name_too(tmp_path, 
     finally:
         m.close()
     assert any("checked: every file the client opens" in line for line in d.lines)
+
+
+# -- a folder MPQ for our own client (2026-11-13) --------------------------------------------------
+def _folder_client(d):
+    exe = os.path.join(d.client, edition.CLIENT_EXE)
+    with open(exe, "wb") as fh:                                   # a client that opens folder MPQs
+        fh.write(b"MZ" + RP.MERGE_MARK + b" " + RP.FOLDER_MARK + b"%s in place")
+    d.folder = True
+
+
+def test_the_folder_mpq_is_ours_only_when_asked_and_the_client_reads_it(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    assert not d.as_folder                                        # off by default: a packed MPQ for everyone
+    d.folder = True
+    assert not d.as_folder                                        # the client can't open folder MPQs
+    _folder_client(d)
+    assert d.as_folder and SV.Settings().folder_mpq is False
+
+
+def test_install_into_a_folder_copies_only_what_changed_and_undoes(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    _folder_client(d)
+    dest = os.path.join(d.client, "Data", RP.PATCH)
+    assert d.go(BASKET, PLAN)
+    assert os.path.isdir(dest) and DR._made_here(dest)
+    first = d.last_install()
+    assert first["added"] == [dest] and first["folder"]["added"]
+    helm = LISTFILE[HEAD].replace("/", "\\")
+    assert open(os.path.join(dest, helm), "rb").read() == FakeRetail().files[HEAD]
+    assert any("installed patch-Q.MPQ as a folder" in line for line in d.lines)
+    assert any("nothing above patch-Q.MPQ hides its files" in line for line in d.lines)
+    d.lines.clear()
+    assert d.go(BASKET, PLAN)                                     # again: nothing new to copy
+    second = d.last_install()
+    assert second["added"] == [] and second["client"] == []
+    assert not second["folder"]["added"] and not second["folder"]["removed"]
+    with open(os.path.join(dest, helm), "wb") as fh:              # a file changed by hand since
+        fh.write(b"edited")
+    assert d.go(BASKET, PLAN)
+    third = d.last_install()
+    assert helm in third["folder"]["changed"]
+    assert d.undo() and open(os.path.join(dest, helm), "rb").read() == b"edited"   # put back as it was
+    assert d.undo() and os.path.isdir(dest)                       # the second install changed nothing
+    assert d.undo() and not os.path.exists(dest)                  # the first made the folder: it goes
+    assert not d.undo()
+
+
+def test_a_packed_patch_gives_way_to_the_folder_and_comes_back_on_undo(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    dest = os.path.join(d.client, "Data", RP.PATCH)
+    assert d.go(BASKET, PLAN) and os.path.isfile(dest)            # a packed install first
+    _folder_client(d)
+    assert d.go(BASKET, PLAN) and os.path.isdir(dest)             # then the folder in its place
+    rec = d.last_install()
+    assert rec["client"] == [RP.PATCH] and os.path.isfile(os.path.join(rec["backup"], "client", RP.PATCH))
+    d.folder = False
+    assert d.go(BASKET, PLAN) and os.path.isfile(dest)            # and the packed one back over the folder
+    assert os.path.isdir(os.path.join(d.last_install()["backup"], "client", RP.PATCH))
+    assert d.undo() and os.path.isdir(dest)                       # the folder back
+    assert d.undo() and os.path.isfile(dest)                      # the packed patch back
+
+
+def test_another_tools_folder_is_left_alone(tmp_path, monkeypatch):
+    d = _direct(tmp_path, monkeypatch)
+    _folder_client(d)
+    theirs = os.path.join(d.client, "Data", RP.PATCH, "Interface", "theirs.blp")
+    os.makedirs(os.path.dirname(theirs))
+    open(theirs, "wb").write(b"BLP2")
+    assert not d.go(BASKET, PLAN)
+    assert any("another tool's patch" in line for line in d.lines)
