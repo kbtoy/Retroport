@@ -13,9 +13,9 @@ This is the `32bit` branch, made from the `x64` branch (the Workbench for Ultra 
 differ in `retroport/workbench/edition.py` and their docs. The `main` branch keeps the earlier
 Workbench, which converted items for any 3.3.5a client through the retail backport kit.
 
-**Not usable yet:** the 32-bit client isn't built. Until it is, nothing here has been tried against
-it - what it can hold in a 32-bit program's memory may mean this branch has to install less than the
-x64 one does.
+**Not tried in game yet:** the 32-bit client is built (2026-11-09) and starts, but nothing this
+Workbench installs has been played in it yet - what a 32-bit program can hold in memory may mean
+installing less than the x64 one does.
 
 **Only for a 32-bit client on a server of its own.** This Workbench keeps its own basket, installs and
 item SQL. On the server the x64 clients play on, it and the x64 Workbench would undo each other's
