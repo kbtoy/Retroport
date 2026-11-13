@@ -1103,8 +1103,10 @@ function notes(info, lines) { for (const l of lines || []) info.append(el("div",
 function addGlows(v, part, glows, source, colour = null) {
   const out = [];
   for (const g of glows || []) {
-    if (!(part.mesh.attachments || []).some(a => a[0] === g.point)) continue;
-    out.push(v.add(g.mesh, {texUrl: texUrl(source), attach: {part, id: g.point, scale: g.scale}, ghost: true, colour}));
+    // a point the model lacks leaves the glow out - but the base (a kit's "none"): its root, as the client
+    if (!(part.mesh.attachments || []).some(a => a[0] === g.point) && g.point !== 19) continue;
+    out.push(v.add(g.mesh, {texUrl: texUrl(source), attach: {part, id: g.point, scale: g.scale, root: g.point === 19},
+                            ghost: true, colour}));
   }
   return out;
 }

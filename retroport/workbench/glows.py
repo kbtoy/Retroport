@@ -8,12 +8,13 @@ retail's own tables for it (``TABLES``, whole) and attaches models to the item's
 
 * ``point``: ItemVisuals.ModelFileID[0..4], each at the item model's attachment point 0..4;
 * ``effect``: an ItemVisualsXEffect row's AttachmentModelFileID at its AttachmentID, scaled, for a
-  weapon of the row's DisplayWeaponSubclassID (-1: any item - which the client doesn't take yet: it
-  draws a row only for the one weapon type it names);
+  weapon of the row's DisplayWeaponSubclassID, or for any item (-1: a weapon's own glow whatever its
+  type, along its blade - points 1-5, some 9);
 * ``kit``: the models of a spell visual kit (ItemVisuals.SpellVisualKitId1/2, an ItemVisualsXEffect
   row's SpellVisualKitID): the kit's SpellVisualKitModelAttach rows and those a SpellVisualKitEffect
-  row of type 2 names, each SpellVisualEffectName.ModelFileDataID at the row's AttachmentID - the
-  client draws a still one only (``kit_skip``).
+  row of type 2 names, each SpellVisualEffectName.ModelFileDataID at the row's AttachmentID (none, -1:
+  the item's base, ``BASE``, or its root where it has none) - the client draws a still one only
+  (``kit_skip``).
 
 The client finds each model by FileDataID through the path tables. Every model a look's visual
 attaches goes in the patch with its own files, drawn yet or not: a client that learns the rest needs
@@ -38,13 +39,14 @@ TABLES = {
 ROWS = {"ItemVisuals": "itemvisuals", "ItemVisualsXEffect": "itemvisualsxeffect",
         "SpellVisualKitEffect": "spellvisualkiteffect", "SpellVisualKitModelAttach": "spellvisualkitmodelattach",
         "SpellVisualEffectName": "spellvisualeffectname"}
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 WEAPON = 2                                   # Item.ClassID of a weapon
 ANY = -1                                     # DisplayWeaponSubclassID: any item
+BASE = 19                                    # a kit model's attachment of none (-1): the base, else the root
+DRAWN_FLAGS = 0x4 | 0x8                      # SpellVisualKitModelAttach.Flags the client draws with (undocumented)
 
 # why the client doesn't draw a glow model (``Glow.skip``), as the page says it
-ANY_ITEM = "for any item (the client draws an effect for one weapon type only)"
-MODEL_POSITION = "a kit model with retail's ModelPosition (the client takes only 0)"
+MODEL_POSITION = "a kit model with a ModelPosition the client doesn't take (only 0 or unset)"
 
 
 @dataclass(frozen=True)
@@ -65,12 +67,13 @@ def _f(v) -> float:
 
 def kit_skip(attach: dict, name: dict | None) -> str:
     """Why the client doesn't draw a kit's model (ItemVisualGraph.cpp's ResolveKits): "" when it does.
-    It takes a still model only - no flags, anim kit, random variation or texture/dissolve swap, an
-    attachment point it knows, a scale and alpha it can use; and ModelPosition 0, where retail's
-    rows almost all say -1. A positioner it draws when that stands still, which this doesn't read."""
+    It takes a still model only - no flags but 4 and 8 (``DRAWN_FLAGS``, drawn as a plain attachment),
+    no anim kit, random variation or texture/dissolve swap, an attachment point it knows (or none), a
+    scale and alpha it can use; and ModelPosition 0 or unset (retail's -1, on nearly every row). A
+    positioner it draws when that stands still, which this doesn't read."""
     if name is None:
         return "no SpellVisualEffectName row"
-    if attach.get("Flags") or name.get("Flags"):
+    if (attach.get("Flags") or 0) & ~DRAWN_FLAGS or name.get("Flags"):
         return "flags"
     if attach.get("AnimKitID"):
         return "an anim kit"
@@ -81,10 +84,10 @@ def kit_skip(attach: dict, name: dict | None) -> str:
         return "a texture swap"
     if name.get("DissolveEffectID"):
         return "a dissolve"
-    if name.get("ModelPosition"):
+    if name.get("ModelPosition") not in (None, 0, -1):
         return MODEL_POSITION
     point = attach.get("AttachmentID")
-    if not isinstance(point, int) or not 0 <= point <= 255:
+    if not isinstance(point, int) or not -1 <= point <= 255:
         return "an attachment point it doesn't know"
     delay, alpha = _f(attach.get("StartDelay") or 0), _f(name.get("Alpha", 1))
     if not 0 <= delay <= 2_147_483:
@@ -136,8 +139,9 @@ def index(rows: dict[str, list[tuple[int, dict]]]) -> dict[int, list[list]]:
             name = names.get(row.get("SpellVisualEffectNameID") or 0)
             fdid = (name or {}).get("ModelFileDataID") or 0
             if fdid:
-                out.append((fdid, row.get("AttachmentID") or 0, kit_skip(row, name),
-                            _scale(row.get("Scale"), name.get("Scale"))))
+                point = row.get("AttachmentID") or 0
+                out.append((fdid, BASE if isinstance(point, int) and (point < 0 or point >= 255) else point,
+                            kit_skip(row, name), _scale(row.get("Scale"), name.get("Scale"))))
         return out
 
     out: dict[int, list[list]] = {}
@@ -171,8 +175,8 @@ def relocate(path: str) -> str:
 
 def for_look(glows: list[list] | None, item: dict | None) -> list[Glow]:
     """A look's glows from its visual's ``index`` entry, for its retail Item row: the visual's own
-    models and kits, the effect rows for any item (which the client doesn't draw yet), and those for
-    the item's weapon type when it is a weapon. Each model once (the first that the client draws)."""
+    models and kits, the effect rows for any item, and those for the item's weapon type when it is a
+    weapon. Each model once (the first that the client draws)."""
     out: dict[int, Glow] = {}
     for g in _applying(glows, item):
         if g.fdid not in out or (out[g.fdid].skip and not g.skip):
@@ -190,9 +194,7 @@ def _applying(glows: list[list] | None, item: dict | None) -> list[Glow]:
     weapon = (item or {}).get("SubclassID") if (item or {}).get("ClassID") == WEAPON else None
     out = []
     for fdid, route, point, sub, skip, *rest in glows or []:
-        if sub == ANY:
-            skip = skip or ANY_ITEM
-        elif sub is not None and sub != weapon:
+        if sub is not None and sub != ANY and sub != weapon:
             continue                                 # another weapon type's: retail doesn't draw it either
         out.append(Glow(fdid, route, point, skip, rest[0] if rest else 1.0))
     return out

@@ -342,17 +342,20 @@ visual) is still 3.3.5's. Each model is found by FileDataID through the path tab
 
 - **point** - ItemVisuals.ModelFileID[0..4] at attachment points 0-4: drawn;
 - **effect** - an ItemVisualsXEffect row's AttachmentModelFileID at its AttachmentID, scaled: drawn
-  for a weapon whose subclass is the row's DisplayWeaponSubclassID. A row with -1 (any item - 577 of
-  the model rows of the visuals 12.1.5's displays use) isn't drawn: the client takes no wildcard
-  (`glows.ANY_ITEM`). A row for another
+  for a weapon whose subclass is the row's DisplayWeaponSubclassID, and on every item for a row of -1
+  (any item: 773 of 12.1.5's 3,001 model rows - a weapon's own glow whatever its type, along its
+  blade at points 1-5, some 9;
+  where a visual has both kinds they hang at different points, so both are drawn). A row for another
   weapon type isn't the look's at all, and isn't shipped (`for_look`);
 - **kit** - the models of ItemVisuals.SpellVisualKitId1/2 and of an effect row's SpellVisualKitID:
   the kit's own ModelAttach rows, plus those a type-2 KitEffect row names, each
-  SpellVisualEffectName.ModelFileDataID at the row's AttachmentID. `glows.kit_skip` mirrors the
-  client's refusals. It draws a still model only, with ModelPosition 0, and retail sets -1 on
-  47,564 of 47,710 effect names, so today it draws none (`glows.MODEL_POSITION`). Type-1 rows
-  (procedural effects) carry no model; the client's `ProceduralEnchants.cpp` reads them from the
-  shipped tables.
+  SpellVisualEffectName.ModelFileDataID at the row's AttachmentID - none (-1) is the item's base,
+  `glows.BASE` (19), or its root where it has no base. `glows.kit_skip` mirrors the client's
+  refusals: a still model only, with ModelPosition 0 or unset (retail's -1, on 47,564 of 47,710
+  effect names), no flags but 4 and 8 (`glows.DRAWN_FLAGS`: on one item kit, a fel aura at the base,
+  undocumented - drawn as a plain attachment). A model without the kit's animation plays its stand.
+  12.1.5's item visuals use 8 kit models; all are drawn. Type-1 rows (procedural effects) carry no
+  model; the client's `ProceduralEnchants.cpp` reads them from the shipped tables.
 
 Every model of a look's glows ships, drawn or not, so a client that learns more needs only
 itself. 12.1.5: 380 of 403 visuals have a model, 2,855 displays name one of 211.

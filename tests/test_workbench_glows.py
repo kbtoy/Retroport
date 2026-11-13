@@ -26,8 +26,8 @@ def _name(model: int, **over) -> dict:
     return row | over
 
 
-# visual 456: a model at points 0 and 1, a kit with a still model and one at retail's ModelPosition -1,
-# an effect row for any item, one for staves (with a kit of its own) and one for swords
+# visual 456: a model at points 0 and 1, a kit with a still model and one at retail's ModelPosition -1 on
+# no attachment (-1), an effect row for any item, one for staves (with a kit of its own) and one for swords
 ROWS = {
     "ItemVisuals": [(456, {"SpellVisualKitId1": 900, "SpellVisualKitId2": 0, "ModelFileID": [240835, 240836, 0, 0, 0]}),
                     (457, {"SpellVisualKitId1": 0, "SpellVisualKitId2": 0, "ModelFileID": [0, 0, 0, 0, 0]})],
@@ -39,7 +39,7 @@ ROWS = {
         (3, {"ItemVisualsID": 456, "AttachmentID": 1, "DisplayWeaponSubclassID": 7, "SpellVisualKitID": 0,
              "AttachmentModelFileID": 2086125, "Scale": 1.0})],
     "SpellVisualKitModelAttach": [(50, _attach(60, 1, ParentSpellVisualKitID=900)),
-                                  (51, _attach(61, 2, ParentSpellVisualKitID=0)),
+                                  (51, _attach(61, -1, ParentSpellVisualKitID=0)),
                                   (52, _attach(62, 3, ParentSpellVisualKitID=901, AnimKitID=12))],
     "SpellVisualKitEffect": [(70, {"ParentSpellVisualKitID": 900, "EffectType": 2, "Effect": 51}),
                              (71, {"ParentSpellVisualKitID": 900, "EffectType": 1, "Effect": 5})],
@@ -53,7 +53,7 @@ def test_a_visuals_models_by_way_of_its_points_effects_and_kits():
     assert sorted(map(tuple, idx[456])) == sorted([
         (240835, "point", 0, None, "", 1.0), (240836, "point", 1, None, "", 1.0),
         (3000001, "kit", 1, None, "", 1.0),                                 # the kit's own attach row
-        (3000002, "kit", 2, None, GL.MODEL_POSITION, 1.0),                  # a type-2 kit effect's
+        (3000002, "kit", GL.BASE, None, "", 1.0),                           # a type-2 kit effect's, on the base
         (2086123, "effect", 7, GL.ANY, "", 1.0), (2086124, "effect", 1, STAFF, "", 1.5),
         (3000003, "kit", 3, STAFF, "an anim kit", 1.0), (2086125, "effect", 1, 7, "", 1.0)])
 
@@ -64,14 +64,16 @@ def test_the_preview_hangs_what_the_client_draws_at_every_point():
     assert sorted((g.fdid, g.point) for g in GL.placements(GL.index(rows)[1], None)) == [(240835, p) for p in range(5)]
     staff = GL.placements(GL.index(ROWS)[456], {"ClassID": GL.WEAPON, "SubclassID": STAFF})
     assert {(g.fdid, g.point, g.scale) for g in staff} == {(240835, 0, 1.0), (240836, 1, 1.0), (3000001, 1, 1.0),
-                                                          (2086124, 1, 1.5)}    # not the any-item or refused ones
+                                                          (3000002, GL.BASE, 1.0), (2086123, 7, 1.0),
+                                                          (2086124, 1, 1.5)}    # not the refused one (an anim kit)
 
 
 def test_a_look_takes_its_items_glows_only():
     idx = GL.index(ROWS)
     staff = {g.fdid: g for g in GL.for_look(idx[456], {"ClassID": GL.WEAPON, "SubclassID": STAFF})}
     assert set(staff) == {240835, 240836, 3000001, 3000002, 2086123, 2086124, 3000003}   # not the sword's
-    assert staff[2086123].skip == GL.ANY_ITEM and staff[2086124].skip == "" and staff[3000003].skip == "an anim kit"
+    assert staff[2086123].skip == "" and staff[2086124].skip == "" and staff[3000003].skip == "an anim kit"
+    assert staff[3000002].skip == "" and staff[3000002].point == GL.BASE        # ModelPosition -1, no attachment
     robe = {g.fdid for g in GL.for_look(idx[456], {"ClassID": 4, "SubclassID": 1})}
     assert robe == {240835, 240836, 3000001, 3000002, 2086123}
     assert GL.for_look(None, None) == []
@@ -80,12 +82,15 @@ def test_a_look_takes_its_items_glows_only():
 def test_the_client_draws_a_still_kit_model_only():
     assert GL.kit_skip(_attach(1, 0), _name(5)) == ""
     assert GL.kit_skip(_attach(1, 0), None) == "no SpellVisualEffectName row"
-    assert GL.kit_skip(_attach(1, 0, Flags=4), _name(5)) == "flags"
+    assert GL.kit_skip(_attach(1, 0, Flags=1), _name(5)) == "flags"
+    assert GL.kit_skip(_attach(1, 0, Flags=12), _name(5)) == ""                  # 4 and 8: drawn plain
     assert GL.kit_skip(_attach(1, 0, YawVariation=0.5), _name(5)) == "random variation"
     assert GL.kit_skip(_attach(1, 0, OffsetVariation=[0.0, 0.1, 0.0]), _name(5)) == "random variation"
     assert GL.kit_skip(_attach(1, 0), _name(5, TextureFileDataID=9)) == "a texture swap"
     assert GL.kit_skip(_attach(1, 0), _name(5, DissolveEffectID=9)) == "a dissolve"
-    assert GL.kit_skip(_attach(1, 0), _name(5, ModelPosition=-1)) == GL.MODEL_POSITION
+    assert GL.kit_skip(_attach(1, 0), _name(5, ModelPosition=-1)) == ""          # retail's unset
+    assert GL.kit_skip(_attach(1, 0), _name(5, ModelPosition=1)) == GL.MODEL_POSITION
+    assert GL.kit_skip(_attach(1, -1), _name(5)) == ""                           # none: the base
     assert GL.kit_skip(_attach(1, 300), _name(5)) == "an attachment point it doesn't know"
     assert GL.kit_skip(_attach(1, 0), _name(5, Alpha=2.0)) == "an alpha"
 
@@ -134,12 +139,12 @@ def test_retail_direct_ships_a_looks_glow_models_and_its_tables(tmp_path, monkey
     finally:
         m.close()
     said = "\n".join(d.lines)
-    assert "1 look(s) have a retail item glow: 5 glow model(s)" in said and "3 of them drawn" in said
-    assert GL.ANY_ITEM in said and GL.MODEL_POSITION in said
+    assert "1 look(s) have a retail item glow: 5 glow model(s)" in said and "5 of them drawn" in said
+    assert "not drawn yet" not in said
     assert "under a retroport\\ folder" in said
     assert "checked: every file the client opens" in said
     rec = d.built_record()["summary"]
-    assert (rec["glows"], rec["glow_models"], rec["glows_drawn"]) == (1, 5, 3)
+    assert (rec["glows"], rec["glow_models"], rec["glows_drawn"]) == (1, 5, 5)
     assert os.path.isfile(os.path.join(d.work, f"glows-{d.retail_build()}.json"))
 
 
