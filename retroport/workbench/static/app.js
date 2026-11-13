@@ -741,7 +741,13 @@ function renderSettings() {
     stField("client", ed().client.replace(/^the /, "") + " folder", v.client, {hint: `the folder with ${ed().exe} and Data`}),
     check ? el("span", {class: "fcheck " + (check[0] ? "ok" : "warn")}, (check[0] ? "✓ " : "! ") + check[1]) : null,
     el("span", {class: "fhint muted"}, "Install puts retail's own items into this client and writes their SQL for your " +
-       "server; it keeps its install, history and Undo in " + v.direct.work + "."));
+       "server; it keeps its install, history and Undo in " + v.direct.work + "."),
+    el("label", {class: "check"},
+       el("input", {type: "checkbox", id: "st-folder-mpq", checked: !!v.folder_mpq, disabled: v.folder_ok === false}),
+       " Install into a folder MPQ ",
+       el("span", {class: "muted"}, v.folder_ok === false ?
+          "- this client doesn't open folder MPQs; Install makes a packed MPQ" :
+          "- the patch as a folder in Data: each install copies only the files that changed")));
   const bfaBrowse = el("label", {class: "check"}, el("input", {type: "checkbox", id: "st-bfa-browse", checked: v.bfa.browse}),
                        " Also browse BfA's items (a second tab)");
   $("#st-sources").replaceChildren(
@@ -759,7 +765,8 @@ async function saveSettings() {
   const body = {client: val("client"),
     retail: {kind: kind("retail"), path: val("retail-path")},
     bfa: {kind: kind("bfa"), path: val("bfa-path"), browse: $("#st-bfa-browse").checked},
-    dbd: val("dbd"), listfile: val("listfile")};
+    dbd: val("dbd"), listfile: val("listfile"),
+    folder_mpq: !!($("#st-folder-mpq") || {}).checked};
   $("#st-save").disabled = true;
   try {
     ST.v = await post("/api/settings", body);

@@ -55,6 +55,7 @@ from . import models as M
 from . import mountpack as MP
 from . import mounts as MT
 from . import pick as P
+from . import retailpack as RP
 from . import wotlk as WK
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -111,6 +112,9 @@ class Settings:
     dbd: str = ""                                           # WoWDBDefs definitions folder (local installs)
     listfile: str = ""                                      # the community listfile (local installs)
     data: str = ""                                          # cache + basket
+    # Install into a folder MPQ (Data\patch-Q.MPQ\ as a folder; only the files that changed are copied) when the
+    # client opens such folders; off (the default, what a release ships with): the packed MPQ
+    folder_mpq: bool = False
 
     @classmethod
     def load(cls, path: str = SETTINGS_PATH) -> "Settings":
@@ -230,6 +234,7 @@ class Workbench:
         self._meshes.clear()
         retail = specs.get("retail")
         self.direct.client, self.direct.listfile = st.client, st.listfile
+        self.direct.folder = st.folder_mpq
         self.direct.source = readers.get("retail") if retail and retail.kind == "local" else None
 
     def busy(self) -> bool:
@@ -837,7 +842,8 @@ class Workbench:
         src = lambda k: {"kind": specs[k].kind, "path": specs[k].path, "browse": specs[k].browse}
         return {"client": st.client, "retail": src("retail"), "bfa": src("bfa"), "dbd": st.dbd, "listfile": st.listfile,
                 "direct": {"work": self.direct.work}, "checks": self.checks(), "first_run": not st.client,
-                "data_dir": st.data_dir, "picker": P.available()}
+                "data_dir": st.data_dir, "picker": P.available(), "folder_mpq": st.folder_mpq,
+                "folder_ok": RP.reads_folder_archives(st.client) if st.client else None}
 
     def checks(self) -> dict:
         """Each setting's folder or file looked at: {name: [ok, what was found]}."""
@@ -872,7 +878,7 @@ class Workbench:
             put("listfile", os.path.isfile(st.listfile), "listfile" if os.path.isfile(st.listfile) else "no such file")
         why = self.direct.problems()
         put("install", not why, why[0] if why else f"Retail's own items go into {edition.CLIENT_NAME}'s " +
-            self.direct.patch_name)
+            self.direct.patch_name + (" (a folder MPQ)" if self.direct.as_folder else ""))
         return out
 
     def apply_settings(self, v: dict) -> None:
@@ -892,6 +898,7 @@ class Workbench:
                 spec = dict(default, browse=key == "retail" or bool(x.get("browse")))
             st.sources = [s for s in st.sources if s.get("key") != key] + [spec]
         st.dbd, st.listfile = norm(v.get("dbd", st.dbd)), norm(v.get("listfile", st.listfile))
+        st.folder_mpq = bool(v.get("folder_mpq", st.folder_mpq))
         st.save()
         self.configure()
         self.start()

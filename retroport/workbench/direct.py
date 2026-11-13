@@ -62,8 +62,10 @@ DB2_NAMES = {"ItemDisplayInfo": "itemdisplayinfo", "ModelFileData": "modelfileda
 
 
 def _made_here(path: str) -> bool:
-    """Whether the archive at ``path`` is one retail direct made (its manifest)."""
+    """Whether the archive at ``path`` is one retail direct made (its manifest) - a packed MPQ or a folder MPQ."""
     from ..mpq import MPQ
+    if path and os.path.isdir(path):
+        return os.path.isfile(os.path.join(path, *RP.MANIFEST.split("\\")))
     if not path or not os.path.isfile(path):
         return False
     try:
@@ -117,6 +119,7 @@ class Direct:
         self.job: J.Job | None = None
         self.mount_catalog = lambda: None    # retail's mounts (the workbench sets it)
         self.mount_built = None              # the last build's mounts (mountpack.Built: the items' rows)
+        self.folder = False                  # Settings' folder_mpq: install into a folder MPQ (``as_folder``)
         self._lock = threading.Lock()
 
     # -- state ------------------------------------------------------------------
@@ -124,6 +127,35 @@ class Direct:
     def patch_name(self) -> str:
         """The patch this route installs in the client (``retailpack.patch_for``)."""
         return RP.patch_for(self.client)
+
+    @property
+    def as_folder(self) -> bool:
+        """Install into a folder MPQ (Data\\patch-Q.MPQ\\ as a folder, the build's files synced into it - only what
+        changed is copied): when Settings asks for it and the client opens such folders (``retailpack.FOLDER_MARK``).
+        Off, the packed MPQ as before - what everyone else's install does."""
+        return bool(self.folder) and RP.reads_folder_archives(self.client) is True
+
+    def without_own(self, sources: list) -> list:
+        """A ClientData's sources but this route's own patches, packed or folders (labelled
+        "Data\\patch-Q.MPQ (folder)"): the client as a build of this route finds it."""
+        own = self.own_patches()
+        plain = lambda label: label.lower().split(" (folder)")[0].removeprefix("data\\")
+        return [(label, s) for label, s in sources if plain(label) not in own]
+
+    def installed_files(self, dest: str) -> list[str]:
+        """The installed patch's files (game paths): a folder's on disk, a packed MPQ's listfile."""
+        if os.path.isdir(dest):
+            out = []
+            for root, dirs, names in os.walk(dest):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                out += [os.path.relpath(os.path.join(root, n), dest) for n in names if not n.startswith(".")]
+            return out
+        from ..mpq import MPQ
+        m = MPQ(dest)
+        try:
+            return (m.read("(listfile)") or b"").decode("latin-1").splitlines()
+        finally:
+            m.close()
 
     def own_patches(self) -> set[str]:
         """The client's archives this route made (lower case): its patch, and an earlier install's at
@@ -429,7 +461,7 @@ class Direct:
         cd = ClientData(self.client)
         try:
             # the client as this patch finds it: everything but the patch itself
-            cd.sources = [(label, s) for label, s in cd.sources if label.lower() not in self.own_patches()]
+            cd.sources = self.without_own(cd.sources)
             taken = {r[0] for r in DBCFile.from_bytes(cd.read("DBFilesClient\\Item.dbc")).records}
             dbc_displays = {r[0] for r in DBCFile.from_bytes(cd.read("DBFilesClient\\ItemDisplayInfo.dbc")).records}
             base = {}
@@ -649,7 +681,7 @@ class Direct:
         cd = ClientData(self.client)
         bad = []
         try:
-            cd.sources = [(label, s) for label, s in cd.sources if label.lower() not in self.own_patches()]
+            cd.sources = self.without_own(cd.sources)
             for d in files.displays or []:
                 for what, path in RP.lookups(files.graph, d, files.paths):
                     if not path or (path.lower() not in held and not cd.exists(path)):
@@ -716,7 +748,8 @@ class Direct:
         data = self.cfg.client_data
         name = self.patch_name
         dest = os.path.join(data, name)
-        if os.path.isfile(dest) and not _made_here(dest):
+        folder = self.as_folder
+        if os.path.exists(dest) and not _made_here(dest) and not (os.path.isdir(dest) and not os.listdir(dest)):
             self.say(f"!! {dest} is another tool's patch - retail direct won't replace it")
             return False
         # an earlier install of this route at the other letter (patch-T, before the client read every
@@ -732,18 +765,28 @@ class Direct:
                   "basket": items, "data": data, "sql": sql, "mounts": mounts or []}
         self.say(f"Backing up and installing (backup: {backup})")
         for n in earlier:
+            if os.path.isdir(os.path.join(data, n)):     # this route's folder at the other letter: kept as it is
+                continue
             shutil.copy2(os.path.join(data, n), os.path.join(backup, "client", n))
             record["client"].append(n)
             os.remove(os.path.join(data, n))
             self.say(f"   took out {n} (this route's, from before) - its items are in {name} now")
-        if os.path.exists(dest):
-            shutil.copy2(dest, os.path.join(backup, "client", name))
-            record["client"].append(name)
-            os.remove(dest)                          # never write through a hard link into another client
+        if folder:
+            if not self._install_folder(patch, dest, backup, record):
+                return False
         else:
-            record["added"].append(dest)
-        shutil.copy2(patch, dest)
-        self.say(f"   installed {name}")
+            if os.path.isdir(dest):                  # an install into the folder before: it goes, the packed patch in its place
+                shutil.copytree(dest, os.path.join(backup, "client", name))
+                record["client"].append(name)
+                shutil.rmtree(dest)
+            elif os.path.exists(dest):
+                shutil.copy2(dest, os.path.join(backup, "client", name))
+                record["client"].append(name)
+                os.remove(dest)                      # never write through a hard link into another client
+            else:
+                record["added"].append(dest)
+            shutil.copy2(patch, dest)
+            self.say(f"   installed {name}")
         self.check_shadowed(name)
         built = self.mount_built
         if built is not None and mounts:
@@ -762,6 +805,31 @@ class Direct:
             self.say(f"   {p}")
         return True
 
+    def _install_folder(self, patch: str, dest: str, backup: str, record: dict) -> bool:
+        """The build's patch into ``dest`` as a folder MPQ (``as_folder``): only the files that changed copied in,
+        the ones this route dropped taken out (``foldersync``, package "retail-direct"), each replaced or removed
+        file kept in the backup's ``folder\\`` for Undo. A packed patch of this route standing at ``dest`` goes
+        into the backup first (the folder takes its name)."""
+        from .. import foldersync as FS
+        name = os.path.basename(dest)
+        packed = os.path.isfile(dest)
+        if packed:                                   # Undo takes the folder out and puts this back (record's client)
+            shutil.copy2(dest, os.path.join(backup, "client", name))
+            record["client"].append(name)
+            os.remove(dest)
+            self.say(f"   took out the packed {name} - a folder {name} takes its place")
+        made = not packed and not os.path.isdir(dest)
+        r = FS.sync(patch, dest, "retail-direct", backup=os.path.join(backup, "folder"))
+        if made:
+            record["added"].append(dest)             # Undo takes the whole folder out
+        record["folder"] = {"path": dest, "added": r.added + ([r.manifest_added] if r.manifest_added else []),
+                            "changed": r.changed, "removed": r.removed}
+        self.say(f"   installed {name} as a folder: {len(r.added)} added, {len(r.changed)} changed, {len(r.removed)} taken "
+                 f"out, {r.unchanged} as they were ({r.bytes_copied / 1048576:.1f} MB copied)")
+        for f in r.left[:6]:
+            self.say(f"!  {name}\\{f}: changed since the last install - left as it is")
+        return True
+
     def client_check(self) -> bool:
         """The installed patch's models as the client reads them in play, natively: the client run
         in its model check mode (WXL_RETAIL_MODEL_CHECK, retroport-native's x64_native_model_check.py) on
@@ -777,18 +845,13 @@ class Direct:
         if J.wow_running():
             self.say("!! close World of Warcraft first")
             return False
-        from ..mpq import MPQ
         data = rec.get("data") or self.cfg.client_data
         name = self.patch_name
         patch = os.path.join(data, name)
-        if not os.path.isfile(patch):
+        if not os.path.exists(patch):
             self.say(f"!! {patch} isn't there - Install first")
             return False
-        m = MPQ(patch)
-        try:
-            listed = (m.read("(listfile)") or b"").decode("latin-1").splitlines()
-        finally:
-            m.close()
+        listed = self.installed_files(patch)
         models = sorted({f.strip() for f in listed if f.strip().lower().endswith(".m2")}, key=str.lower)
         if not models:
             self.say(f"   {name} holds no models to check")
@@ -897,16 +960,12 @@ class Direct:
         such archive named once, with a few of its files) - a whole table another tool put higher
         up hides this patch's rows. The path tables count only for a client that reads the top copy
         alone; one that reads them all (``retailpack.merges_path_tables``) finds this patch's too."""
-        from ..mpq import ClientData, MPQ
+        from ..mpq import ClientData
         data = self.cfg.client_data
         merges = RP.merges_path_tables(self.client) is not False
         skip = {RP.MODEL_PATHS.lower(), RP.TEXTURE_PATHS.lower(), RP.MANIFEST.lower()} if merges else {RP.MANIFEST.lower()}
         try:
-            m = MPQ(os.path.join(data, name))
-            try:
-                listed = (m.read("(listfile)") or b"").decode("latin-1").splitlines()
-            finally:
-                m.close()
+            listed = self.installed_files(os.path.join(data, name))
             cd = ClientData(self.client, top=name)
         except Exception as e:
             self.say(f"!  couldn't check what stands above {name}: {type(e).__name__}: {e}")
@@ -942,13 +1001,25 @@ class Direct:
             self.say("!! close World of Warcraft first")
             return False
         backup, data = rec["backup"], rec.get("data") or self.cfg.client_data
+        made = {os.path.normcase(p) for p in rec.get("added", [])}
+        fold = rec.get("folder")
+        if fold and os.path.normcase(fold["path"]) not in made and os.path.isdir(fold["path"]):
+            from .. import foldersync as FS          # a sync into a folder that was there: its files put back
+            FS.restore(fold["path"], os.path.join(backup, "folder"), fold.get("added") or [])
+            self.say(f"   client: put {os.path.basename(fold['path'])}'s files back as they were "
+                     f"({len(fold.get('changed') or []) + len(fold.get('removed') or [])} restored, "
+                     f"{len(fold.get('added') or [])} taken out)")
         for n in rec.get("client", []):
             fp = (rec.get("item_rows") or {}).get(n)
             if fp and os.path.isfile(os.path.join(data, n)) and MP._fingerprint(os.path.join(data, n)) != fp:
                 self.say(f"   client: {n} changed after this install (another one replaced it) - left as it is")
                 continue
             J.remove_any(os.path.join(data, n))
-            shutil.copy2(os.path.join(backup, "client", n), os.path.join(data, n))
+            kept = os.path.join(backup, "client", n)
+            if os.path.isdir(kept):                  # a folder MPQ an install of the packed one took out
+                shutil.copytree(kept, os.path.join(data, n))
+            else:
+                shutil.copy2(kept, os.path.join(data, n))
             self.say(f"   client: put back {n}")
         for p in rec.get("added", []):
             J.remove_any(p)
