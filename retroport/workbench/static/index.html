@@ -18,6 +18,7 @@
   <button class="nav on" data-view="items">Items</button>
   <button class="nav" data-view="sets">Sets &amp; collections</button>
   <button class="nav" data-view="mounts">Mounts</button>
+  <button class="nav" data-view="collection" title="Your own collections, piece by piece">My collections <span class="count" id="collection-count">0</span></button>
   <button class="nav" data-view="basket">Basket <span class="count" id="basket-count">0</span></button>
   <button class="nav" data-view="stats">Stats <span class="count warn" id="stats-state" hidden></span></button>
   <button class="nav" data-view="backport">Install <span class="count" id="kit-state"></span></button>
@@ -64,6 +65,11 @@
     <div class="summary" id="set-summary"></div>
     <div class="grid sets" id="set-grid"></div>
     <button class="more" id="set-more" hidden>Load more</button>
+  </section>
+
+  <section class="view" id="view-collection" hidden>
+    <div class="cl-intro muted">Your own set, piece by piece: open any item or a set's piece and press <b>Add to Custom Collection</b>. Click a piece here to look at it again; the character on the right wears the whole collection.</div>
+    <div id="collection-body"></div>
   </section>
 
   <section class="view" id="view-mounts" hidden>
@@ -191,6 +197,7 @@
 <script src="/static/colour.js"></script>
 <script src="/static/viewer.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/collections.js"></script>
 <script src="/static/colourway.js"></script>
 <script src="/static/stats.js"></script>
 </body>

@@ -65,7 +65,7 @@ _lock = threading.Lock()
 
 
 SET_FIELDS = ("ilvl", "req", "quality", "bonding")     # a piece's own only once its set is broken
-SET_KINDS = ("set", "itemset")                         # the basket entries that are sets of pieces
+SET_KINDS = ("set", "itemset", "collection")           # the basket entries that are sets of pieces
 
 
 def empty() -> dict:

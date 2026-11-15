@@ -140,14 +140,18 @@ function itemCard(r) {
 async function ensureRaces() {
   if (!PV.races.length) { try { PV.races = await api("/api/races"); } catch (e) { /* the default list */ } }
 }
-// back: {id, kind, name} - the set the piece was opened from
-async function openItem(id, back = null) {
+// back: {id, kind, name} - the set the piece was opened from - or {name, open()}: a collection of yours.
+// look: the version to show first (a collection's piece: the one it holds)
+async function openItem(id, back = null, look = 0) {
   const [d] = await Promise.all([api("/api/item", {source: S.source, id}), ensureRaces()]);
-  S.open = {kind: "item", id};
+  S.open = {kind: "item", id, back, look};
   PV.step = null;
   markSelected();
+  const first = look ? d.appearances.find(a => a.display === look) : null;
+  if (first) { d.appearance = first.appearance; d.display = first.display; }
   const body = [];
-  if (back) body.push(el("button", {class: "btn ghost back", onclick: () => openSet(back.id, back.kind)}, `← Back to ${back.name}`));
+  if (back) body.push(el("button", {class: "btn ghost back", onclick: () => back.open ? back.open() : openSet(back.id, back.kind)},
+                         `← Back to ${back.name}`));
   body.push(el("div", {class: "d-head"}, icon(d.icon, d.quality, "lg"),
     el("div", {}, el("h2", {style: `color:${qcolor(d.quality)}`}, d.name),
        el("div", {class: "d-sub"}, `${itemKind(d)} · ${S.meta.expansions[d.expansion] || ""}`),
@@ -180,6 +184,7 @@ async function openItem(id, back = null) {
         showIds(a.appearance, a.display);
         if (preview && a.display) loadDisplay(preview.pb, a.display, d.slot);
         if (colours) colours.switched();
+        if (S.versionPicked) S.versionPicked();
       }})));
     if (!(preview && preview.pb.add(chips))) body.push(section("Versions", chips));
   }
@@ -203,9 +208,17 @@ async function openItem(id, back = null) {
   }
   if (d.classes !== -1) body.push(section("Classes", el("div", {class: "d-sub"}, classNames(d.classes))));
   const k = `item:${S.source}:${d.id}`;
+  // the version shown, as a piece of your collection (collections.js); the button follows the version picked
+  const piece = () => ({source: S.source, item: d.id, display: cur.display, label: versionName(cur), name: d.name,
+                        icon: cur.icon || d.icon, quality: d.quality, inv: d.slot});
+  const colSlot = el("span");
+  const colButton = () => colSlot.replaceChildren(window.CollectionsUI && cur.display ? CollectionsUI.collectionButton(piece()) : "");
+  colButton();
+  S.versionPicked = d.appearances.length > 1 ? colButton : null;
   body.push(el("div", {class: "actions"},
     el("button", {class: "btn", onclick: () => toggleBasket(k, {kind: "item", source: S.source, id: d.id, name: d.name,
       icon: d.icon, quality: d.quality, sub: itemKind(d)})}, inBasket(k) ? "Remove from basket" : "Add to basket"),
+    colSlot,
     el("a", {class: "btn ghost", href: `https://www.wowhead.com/item=${d.id}`, target: "_blank", rel: "noopener"}, "Wowhead ↗")));
   showDrawer(body);
 }
@@ -503,7 +516,9 @@ function toggleBasket(k, entry) {
   if (S.open) reopen(S.open);
 }
 function reopen(o) {
-  o.kind === "item" ? openItem(o.id) : o.kind === "mount" ? openMount(o.id) : openSet(o.id, o.kind === "itemset" ? "itemset" : "transmog");
+  if (o.kind === "collection") return CollectionsUI.openCollection();
+  o.kind === "item" ? openItem(o.id, o.back || null, o.look || 0) : o.kind === "mount" ? openMount(o.id) :
+    openSet(o.id, o.kind === "itemset" ? "itemset" : "transmog");
 }
 async function saveBasket() {
   $("#basket-count").textContent = S.basket.length;
@@ -519,7 +534,8 @@ async function saveBasket() {
 }
 function basketCounts(entries) {
   const n = kind => entries.filter(e => e.kind === kind).length;
-  return [[n("set"), "transmog set"], [n("itemset"), "item set"], [n("item"), "item"], [n("look"), "look"], [n("mount"), "mount"]]
+  return [[n("collection"), "collection"], [n("set"), "transmog set"], [n("itemset"), "item set"], [n("item"), "item"],
+          [n("look"), "look"], [n("mount"), "mount"]]
     .filter(([c]) => c).map(([c, w]) => plural(c, w)).join(", ") || "nothing";
 }
 // an install's time stamp (20261014-193005) as "Oct 14, 19:30"
@@ -546,6 +562,10 @@ function openEntry(e, itemId = null) {
   else if (e.kind === "item") openItem(e.id);
   else if (e.kind === "look") { const it = ((e.looks || [])[0] || {}).item; if (it) openItem(it); }
   else if (e.kind === "mount") { show("mounts"); openMount(e.id, (e.mount || {}).display); }
+  else if (e.kind === "collection") {
+    if (CL.doc.collections.some(c => c.key === e.id)) CL.doc.current = e.id;
+    show("collection");
+  }
   else openSet(e.id, e.kind === "itemset" ? "itemset" : "transmog");
 }
 function removeEntries(keys, what) {
@@ -648,7 +668,8 @@ async function renderBasket() {
     $("#basket-list").replaceChildren(el("div", {class: "empty"}, "Nothing picked yet. Use + on any item or set."));
     return;
   }
-  const groups = [["set", "Transmog sets"], ["itemset", "Item sets"], ["item", "Items"], ["look", "Looks"], ["mount", "Mounts"]];
+  const groups = [["collection", "Your collections"], ["set", "Transmog sets"], ["itemset", "Item sets"], ["item", "Items"],
+                  ["look", "Looks"], ["mount", "Mounts"]];
   $("#basket-list").replaceChildren(...groups.map(([kind, title]) => {
     const rows = plan.entries.filter(e => e.kind === kind);
     return rows.length ? el("div", {class: "basket-group"}, el("h3", {}, `${title} (${rows.length})`), rows.map(e => basketRow(e, plan))) : null;
@@ -664,17 +685,20 @@ function basketRow(e, plan) {
     [e.kind !== "itemset" ? e.sub : "", plural(looks.length, "look"), e.items > 1 ? plural(e.items, "item") : ""].filter(Boolean).join(" · ");
   const warn = e.covered ? `Everything in it comes with ${e.shares.join(", ")} already - it adds nothing.`
              : e.shares.length ? `Shares some looks with ${e.shares.join(", ")}.` : "";
+  // a collection's pieces each from their own source (its own is "mine")
+  const mine = e.kind === "collection", src = l => (mine && l && l.source) || e.source;
   return el("div", {class: "bitem" + (e.covered ? " dupe" : "")},
-    icon(e.icon || (looks[0] || {}).icon, e.quality, "sm", e.source),
+    icon(e.icon || (looks[0] || {}).icon, e.quality, "sm", src(looks[0])),
     el("div", {class: "meta"},
       el("div", {class: "bname"},
         el("a", {href: "#", style: e.quality != null ? `color:${qcolor(e.quality)}` : "", title: "Open it",
                  onclick: ev => { ev.preventDefault(); openEntry(e); }}, e.name), status),
-      el("div", {class: "sub muted"}, `${what} · ${sourceLabel(e.source)} #${e.id}`),
+      el("div", {class: "sub muted"}, mine ? `${what} · your collection` : `${what} · ${sourceLabel(e.source)} #${e.id}`),
       looks.length ? el("div", {class: "strip"}, looks.map(l => {
-        const b = icon(l.icon, l.quality, "sm", e.source);
+        const b = icon(l.icon, l.quality, "sm", src(l));
         b.title = [l.name, l.label, S.meta.slots[l.slot], l.also ? `+${l.also} same look` : ""].filter(Boolean).join(" · ");
-        b.addEventListener("click", () => openEntry(e, l.item));
+        b.addEventListener("click", () => mine ? (useSource(l.source), openItem(l.item, {name: e.name, open: () => openEntry(e)}, l.display))
+                                               : openEntry(e, l.item));
         return b;
       })) : null,
       (e.left_out || []).length ? el("div", {class: "left-out muted small"}, "Left out: ", ...e.left_out.flatMap((l, i) => [
@@ -1274,7 +1298,8 @@ async function dress(v, pieces, token, from = null, pb = null) {
   const bodyPart = v.add(body.mesh, {texUrl: texUrl(bsrc), types, visible: id => shows(worn, id, true)});
   const parts = [];
   let models = 0;
-  for (const slot of outfit.dress_order) for (const pc of outfit.pieces.filter(p => p.slot === slot)) for (const m of pc.models) {
+  // what's worn in the client's order, then what's held (in the hands, a shield on the arm)
+  for (const slot of [...outfit.dress_order, ...HELD]) for (const pc of outfit.pieces.filter(p => p.slot === slot)) for (const m of pc.models) {
     if (m.type === 1) {
       parts.push(v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, particle: pc.particle, colour: way,
                                 visible: id => collectionShows(slot, pc.row, id)}));
@@ -1295,15 +1320,15 @@ async function dress(v, pieces, token, from = null, pb = null) {
     `${name(p.display)}: made for ${p.made_for} only - not shown on this race`)];
   return {body, outfit, models, who: `${body.name} ${sex ? "female" : "male"}`};
 }
-// pieces: [{display, slot, name}] - the set's first piece of each slot
-function characterSection(pieces) {
+// pieces: [{display, slot, name}] - the set's first piece of each slot; from: their source (S.source when null)
+function characterSection(pieces, from = null) {
   const pb = previewBox("character");
   if (!pb.v) return Object.assign(section("On a character", pb.box), {pb});
   pb.load(async () => {
     const v = pb.v, token = ++PV.token;
     pb.info.textContent = "Dressing…";
     try {
-      const got = await dress(v, pieces, token, null, pb);
+      const got = await dress(v, pieces, token, from, pb);
       if (!got) return;
       v.fit("front");
       v.draw();
@@ -1315,8 +1340,9 @@ function characterSection(pieces) {
 }
 
 // ---------------------------------------------------------------------------- views & wiring
-const BROWSE = ["items", "sets", "mounts"];
+const BROWSE = ["items", "sets", "mounts", "collection"];
 function show(view) {
+  const was = S.view;
   S.view = view;
   $$(".nav[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
   $$(".view").forEach(v => v.hidden = v.id !== `view-${view}`);
@@ -1327,7 +1353,13 @@ function show(view) {
     const o = S.reopen; S.reopen = null;
     reopen(o);
   }
-  if (BROWSE.includes(view)) $(view === "sets" ? "#set-filters" : view === "mounts" ? "#mount-filters" : "#item-filters").prepend($(".search"));
+  if (BROWSE.includes(view) && view !== "collection")
+    $(view === "sets" ? "#set-filters" : view === "mounts" ? "#mount-filters" : "#item-filters").prepend($(".search"));
+  // your collection: its slots, and the drawer shows it dressed (a piece opened from it keeps its place)
+  if (view === "collection") {
+    CollectionsUI.renderCollectionView();
+    if (was !== "collection" || !S.open) CollectionsUI.openCollection();
+  }
   if (view === "basket") renderBasket();
   if (view === "backport") loadKit();
   if (view === "settings") openSettings();
@@ -1352,6 +1384,7 @@ async function init() {
   fill("#f-cls", classes); fill("#s-cls", classes);
   fill("#s-armour", ["cloth", "leather", "mail", "plate"].map(a => [a, a[0].toUpperCase() + a.slice(1)]));
   try { S.basket = await api("/api/basket"); } catch (e) { S.basket = []; }
+  CollectionsUI.loadCollections();
   $("#basket-count").textContent = S.basket.length;
 
   const search = () => (S.view === "sets" ? searchSets(true) : S.view === "mounts" ? searchMounts(true) : searchItems(true));
