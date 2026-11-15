@@ -248,6 +248,63 @@ armor, glows, particles and ribbons "same" (the colourway's colour), "off" (as m
   wherever the item is drawn (worn, character select, inspect, another player): all it has there is the
   display id.
 
+### The studio (paint and effects)
+
+After Kirazul's Eclipse Studio (Eclipse-DEV: its findings, our own code). `static/studio.js` is the Paint tab
+of the colourway editor; `viewer.js` holds the pose (`freeze`), picks on the CPU (`pick`: each part skinned
+as the vertex program skins it - kept while the pose holds - a ray from the inverse view-projection,
+Moller-Trumbore, the nearest triangle's part, batch, barycentrics and UVs) and draws a part's batches of one
+texture with a painted copy (`paintPart`, that part only).
+
+- **What a click lands on** (`targetOf`): a model's own texture (one the display gives it - a texture fixed
+  in the model can't be swapped for a colourway, so it isn't painted) by its UVs; the body's skin through
+  the section a piece's texture is composited into (the topmost piece layer there, `compositeSkin`'s
+  `layers`); a cloak's cape texture by its UVs.
+- **Part**: the triangles of the batch sharing a vertex with the one clicked (a UV seam or hard edge splits
+  vertices, so a plate, strap or trim is a part of its own), rasterised in texel space a texel wide.
+  **Area**: a flood from the texel over OKLab distance under `0.02 + Reach x 0.3`, within the texels the
+  batch covers. **Brush**: soft dabs every 3 px of the drag on screen, each picked again (so it never
+  jumps across the texture), joined in texel space only when close.
+- **An operation** is one texture's mask: `{tex, size, rect, runs, colour, ref}` - runs are base64 of
+  (value u8, count u16 LE) pairs row after row, `ref` the art's mean OKLab lightness under the mask. A
+  painted texel takes the paint's hue and colourfulness and lightness `Lp x L / ref` (`Lp` the paint's,
+  0.72 x the brightness multiplier), eased above `Lp` toward white by at most `ROOM` (0.6) of the way;
+  mixed in by the mask's coverage. `Colour.paintImage` lays the operations over the art in the armor
+  colour (kept per image and colour); `paint.py` does the same numbers at Install (tested pixel for
+  pixel against the page). An operation made on another size of the texture is left out.
+- **Effects** (`effectsOf`): the textures of glow batches (an item glow's model, blend 3/4/7, an unlit
+  see-through one), emitters and ribbons (a ribbon by its first texture: the client colours its layers
+  together); `way.fx[fdid]` is a colour or `"off"`. Only what glows takes it; a painted batch's armor isn't
+  recoloured (its copy carries the armor colour).
+- **Install** (`paint.bake`): each painted texture of a colourway becomes `<name>_p<entry>` beside it
+  (before a trailing `_m`/`_f`/`_u`), DXT; `WxlItemColours.txt` gains two columns - the effects' colours
+  (`texture=colour|...`, the texture's path lower case without extension, `retailpack.fx_key`) and the
+  painted textures (`FileDataID=path|...`). The client's item index puts each copy in its texture's
+  place for the colourway's display; its draws match effects and painted copies by the name a texture was
+  loaded from (`ItemTextureColour`).
+- **Mounts**: a mount colourway is a ride of its own (`MT.allocate` under `mount~key`), its painted skins
+  baked beside them (`mountpack._baked_skins`), its colours in `DBFilesClient\WxlCreatureColours.txt`
+  (its CreatureDisplayInfo id, 0, the same columns; the painted column names the baked skins, which the
+  client doesn't recolour). The client stamps it on the mount's model only: the rider isn't coloured.
+
+### My collections
+
+`static/collections.js`; kept by the server in `<data>\collections.json` (`/api/collections`:
+`{collections: [{key, name, pieces}], current}`). A piece is `{source, item, display, label, name, icon,
+quality, inv, slot, colour?}`; `slotFor` places it (a one-hander to the main hand, else the off hand; a
+two-hander empties the off hand, an off-hand piece takes a two-hander out). In the basket a collection is
+`{kind: "collection", id, pieces}`; `catalog._plan_collection` makes each piece a look from its own source
+in its own colourway (a colourway's look key), and Stats groups them as a set (`itemstats.SET_KINDS`).
+
+### Races and postures
+
+`character.server_races` lists the stock races and those the client's `wxl-races.cfg` adds
+(`WXL_M2_RACE_<id>=<retail>,<team>`), each keyed by its body's prefix; `POSTURES` adds a second body where a
+race has one (orc male hunched/upright from BfA, Mag'har male the other way, undead upright from the
+client's patch-T models - their skeletons found by name, as they're not in the FileDataID tables:
+`ClientFiles`). A race with no BfA body (Earthen) is built from retail's customisation tables
+(`RetailBodies`: ChrModel, the first choice of each option, its texture layers by blend mode).
+
 ## The x64 client
 
 A client folder with `WowClient64.exe` (`edition.CLIENT_EXE`: the x64 3.3.5 client built from
