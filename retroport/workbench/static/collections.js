@@ -4,7 +4,9 @@
 // in its slot (one piece a slot; a one-handed weapon to the main hand, else the off hand; a two-hander empties
 // the off hand). The My collections view shows the collection dressed on the character beside its slots: a
 // click on a piece opens it (and "Back to <collection>" returns), x takes it out, and "Add to basket" puts the
-// whole collection in the basket as one entry - each piece an item, Stats treating it as a set.
+// whole collection in the basket as one entry - each piece an item, Stats treating it as a set. A piece opened
+// from here can take colours of its own (its Colours section keeps them with the piece): each piece of a
+// collection in its own colourway, its own paint and its effects' colours.
 // Kept by the workbench (/api/collections): {collections: [{key, name, pieces}], current}.
 
 const CL = {doc: {collections: [], current: ""}, loaded: false};
@@ -179,7 +181,8 @@ async function openCollection() {
   const armed = c.pieces.some(p => p.slot === "main" || p.slot === "off");
   const pieces = COL_SLOTS.flatMap(([key]) => c.pieces.filter(p => p.slot === key))
     .filter(p => p.slot !== "ranged" || !armed)
-    .map(p => ({display: p.display, slot: p.slot === "off" && p.inv === 13 ? 22 : p.inv, name: p.name, source: p.source}));
+    .map(p => ({display: p.display, slot: p.slot === "off" && p.inv === 13 ? 22 : p.inv, name: p.name, source: p.source,
+                ...(p.colour ? {colour: p.colour} : {})}));
   const body = [el("div", {class: "d-head"}, el("div", {},
     el("h2", {}, c.name), el("div", {class: "d-sub"}, `Your collection · ${plural(c.pieces.length, "piece")}`)))];
   if (pieces.length) {
@@ -193,6 +196,11 @@ async function openCollection() {
 }
 function openCollectionPiece(c, p) {
   useSource(p.source);
-  openItem(p.item, {name: c.name, open: () => { show("collection"); openCollection(); }}, p.display);
+  openItem(p.item, {name: c.name, open: () => { show("collection"); openCollection(); }, piece: {c, p}}, p.display);
 }
-window.CollectionsUI = {loadCollections, addPiece, collectionButton, renderCollectionView, openCollection, collectionEntry};
+// a piece's own colourway, kept with it in its collection (the item's Colours section, opened from the collection)
+function pieceStore(c, p) {
+  return {name: c.name, get: () => p.colour || null,
+          put: way => { if (way) p.colour = way; else delete p.colour; saveCollections(); refreshCollectionView(); }};
+}
+window.CollectionsUI = {loadCollections, addPiece, collectionButton, renderCollectionView, openCollection, collectionEntry, pieceStore};

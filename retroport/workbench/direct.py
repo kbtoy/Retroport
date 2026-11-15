@@ -44,6 +44,7 @@ from . import edition
 from . import jobs as J
 from . import mountpack as MP
 from . import mounts as MT
+from . import paint as PT
 from . import retailpack as RP
 
 ORDER = ["read", "collect", "mounts", "pack", "sql"]
@@ -312,7 +313,10 @@ class Direct:
         passed("read")
         self._step("collect")
         pieces, files, summary = self.collect(looks, rows, glows)
-        colours = RP.colour_table(pieces)            # the colourways the client recolours
+        # the colourways' paint baked into copies of their textures (paint.py), then the table the client recolours by
+        painted, swaps = PT.bake(pieces, files.paths, self.source.try_read, self.say)
+        files.made.update(painted)
+        colours = RP.colour_table(pieces, files.paths, swaps)
         if colours:
             files.made[RP.COLOUR_TABLE] = colours
             self.say(f"   {sum(1 for p in pieces if p.colour)} colourway(s): {RP.COLOUR_TABLE}")
