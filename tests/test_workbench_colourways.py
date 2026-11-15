@@ -51,7 +51,7 @@ def test_the_colour_table_names_each_parts_colour_or_none():
     text = RP.colour_table(pieces).decode()
     line = [l for l in text.splitlines() if not l.startswith("#")]
     # its own display id, the retail display it recolours, then the parts
-    assert line == ["16000000\t722371\t-\t140,1,180,0\t140,1,180,0\t10,0.5,128,1"]
+    assert line == ["16000000\t722371\t-\t140,1,180,0\t140,1,180,0\t10,0.5,128,1\t-\t-"]   # no effects of its own, no paint
     assert RP.colour_table([types.SimpleNamespace(entry=5, display=11, colour=None)]) is None
 
 

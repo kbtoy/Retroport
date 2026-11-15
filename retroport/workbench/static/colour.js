@@ -100,6 +100,113 @@ const Colour = (() => {
   // the uniform the 3D view takes: [hue (radians), saturation, brightness multiplier, dye], or null
   const uniform = k => k ? [(k.hue || 0) * Math.PI / 180, k.sat ?? 1, lightMul(k.light ?? 128), k.dye || 0] : null;
   const same = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
-  return {PARTS, PRESETS, apply, swatch, css, partColour, image, uniform, lightMul, same};
+
+  // -- paint (studio.js): a colour laid over a texture through a mask -----------------------------------------
+  // After Kira's Eclipse Studio (its findings, our own code; retroport/workbench/paint.py works the same at
+  // Install). A painted texel takes the paint's hue and colourfulness, and the paint's lightness times how much
+  // lighter or darker the art is there than the whole PART it belongs to (``ref``: the mean OKLab lightness of the
+  // art under the mask) - so a horn painted red keeps every crease and highlight, and a blade keeps its hilt
+  // darker. Lighter than the paint, it eases toward white (at most ROOM of the way): a highlight is a lighter tint
+  // of the paint, never white. ``c`` (0..1) is how much of the texel takes it (the mask's coverage).
+  const ROOM = 0.6;
+  const paintL = k => Math.min(0.95, Math.max(0.05, 0.72 * lightMul(k.light ?? 128)));
+  function paintTexel(rgb, k, ref, c) {
+    if (c <= 0) return rgb;
+    const [L0] = linToLab(toLin(rgb[0]), toLin(rgb[1]), toLin(rgb[2]));
+    const Lp = paintL(k), room = (1 - Lp) * ROOM;
+    let L = Lp * L0 / Math.max(ref, 1e-3);
+    if (L > Lp) L = Lp + room * (1 - Math.exp(-(L - Lp) / Math.max(room, 1e-4)));
+    L = Math.min(1, Math.max(0, L));
+    const h = (k.hue || 0) * Math.PI / 180, C = (k.sat ?? 1) * cmax(L, h);
+    const out = labToLin(L, C * Math.cos(h), C * Math.sin(h)).map(v => Math.min(1, Math.max(0, toSrgb(v))));
+    return [0, 1, 2].map(i => rgb[i] + (out[i] - rgb[i]) * c);
+  }
+  // the mean OKLab lightness of `px` (RGBA bytes, width w) under a mask: an operation's ``ref``
+  function meanL(px, w, mask) {
+    let sum = 0, wsum = 0;
+    eachTexel(mask, (x, y, c) => {
+      const o = (y * w + x) * 4, [L] = linToLab(toLin(px[o] / 255), toLin(px[o + 1] / 255), toLin(px[o + 2] / 255));
+      sum += L * c; wsum += c;
+    });
+    return wsum ? sum / wsum : 0.5;
+  }
+  // A mask: a rectangle of coverage (0..255) on a texture: {x, y, w, h, data: Uint8Array}. Saved as runs:
+  // base64 of (value u8, count u16 LE) pairs, row after row.
+  function eachTexel(m, fn) {
+    for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) {
+      const c = m.data[j * m.w + i];
+      if (c) fn(m.x + i, m.y + j, c / 255);
+    }
+  }
+  function maskToRuns(m) {
+    const out = [];
+    for (let i = 0; i < m.data.length;) {
+      const v = m.data[i];
+      let n = 1;
+      while (i + n < m.data.length && m.data[i + n] === v && n < 65535) n++;
+      out.push(v, n & 255, n >> 8);
+      i += n;
+    }
+    let s = "";
+    for (let i = 0; i < out.length; i += 0x8000) s += String.fromCharCode(...out.slice(i, i + 0x8000));
+    return btoa(s);
+  }
+  function runsToMask(rect, runs) {
+    const [x, y, w, h] = rect, data = new Uint8Array(w * h), b = atob(runs);
+    let at = 0;
+    for (let i = 0; i + 2 < b.length && at < data.length; i += 3) {
+      const v = b.charCodeAt(i), n = b.charCodeAt(i + 1) | (b.charCodeAt(i + 2) << 8);
+      data.fill(v, at, Math.min(data.length, at + n));
+      at += n;
+    }
+    return {x, y, w, h, data};
+  }
+  // A texture with a piece's paint on it: the art in the piece's armor colour (``base``, null as made), then its
+  // operations on that texture one after another, each through its mask - a painted texel worked out from the art
+  // as made, laid over what is there by the mask's coverage. ops: [{tex, size: [w, h], rect, runs, colour, ref}].
+  // paint.py's paint_rgba works the same at Install.
+  const baked = new WeakMap();
+  function paintImage(img, ops, base = null) {
+    const c = document.createElement("canvas");
+    c.width = img.width; c.height = img.height;
+    const x = c.getContext("2d");
+    x.drawImage(img, 0, 0);
+    if (!ops.length && !base) return c;
+    const d = x.getImageData(0, 0, c.width, c.height), px = d.data;
+    // the art and the art in the armor colour, kept per image (a brush stroke paints again at every move)
+    let kept = baked.get(img);
+    if (!kept || kept.w !== c.width) baked.set(img, kept = {w: c.width, art: px.slice(), key: null, base: null});
+    const art = kept.art;
+    if (base) {
+      const bkey = JSON.stringify(base);
+      if (kept.key !== bkey) {
+        const memo = new Map(), out = art.slice();
+        for (let i = 0; i < out.length; i += 4) {
+          const key = (out[i] << 16) | (out[i + 1] << 8) | out[i + 2];
+          let v = memo.get(key);
+          if (!v) { v = apply([out[i] / 255, out[i + 1] / 255, out[i + 2] / 255], base).map(q => Math.round(q * 255)); memo.set(key, v); }
+          out[i] = v[0]; out[i + 1] = v[1]; out[i + 2] = v[2];
+        }
+        kept.key = bkey; kept.base = out;
+      }
+      px.set(kept.base);
+    }
+    for (const op of ops) {
+      // a mask made on another size of the texture lands elsewhere: left out, as the client's (Kira's rule)
+      if (op.size && (op.size[0] !== c.width || op.size[1] !== c.height)) continue;
+      const m = runsToMask(op.rect, op.runs), memo = new Map();
+      eachTexel(m, (tx, ty, cov) => {
+        if (tx >= c.width || ty >= c.height) return;
+        const o = (ty * c.width + tx) * 4, key = (art[o] << 16) | (art[o + 1] << 8) | art[o + 2];
+        let out = memo.get(key);
+        if (!out) { out = paintTexel([art[o] / 255, art[o + 1] / 255, art[o + 2] / 255], op.colour, op.ref, 1); memo.set(key, out); }
+        for (let k = 0; k < 3; k++) px[o + k] = Math.round(px[o + k] + (out[k] * 255 - px[o + k]) * cov);
+      });
+    }
+    x.putImageData(d, 0, 0);
+    return c;
+  }
+  return {PARTS, PRESETS, apply, swatch, css, partColour, image, uniform, lightMul, same,
+          paintTexel, paintImage, meanL, maskToRuns, runsToMask, eachTexel, ROOM};
 })();
 window.Colour = Colour;

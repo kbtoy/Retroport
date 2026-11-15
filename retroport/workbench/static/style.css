@@ -479,6 +479,20 @@ canvas.viewer:active { cursor: grabbing; }
 .cw-mode { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
 .cw-radio { display: flex; gap: 5px; align-items: center; cursor: pointer; }
 .cw-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+/* the colourway editor's tabs, its effects, and the studio's Paint pane (studio.js) */
+.cw-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); }
+.cw-tabs .tab { background: none; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; padding: 5px 14px;
+  color: var(--muted); cursor: pointer; margin-bottom: -1px; }
+.cw-tabs .tab.on { color: var(--gold); border-color: var(--line); background: var(--panel); }
+.cw-fx-thumb { width: 16px; height: 16px; border-radius: 3px; object-fit: cover; background: #000; flex: none; }
+.st { display: flex; flex-direction: column; gap: 10px; }
+.st-top { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.st .cw-wheel { width: 132px; height: 132px; }
+.st-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.st-tools .cw-slider { min-width: 160px; }
+.st-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.st-status { min-height: 1.3em; }
+canvas.viewer.painting { cursor: crosshair; }
 
 /* My collections (collections.js): the slots as a paper doll, the character in the drawer */
 #view-collection { padding: 16px 20px; overflow: auto; }

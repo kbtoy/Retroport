@@ -541,9 +541,16 @@ class Viewer {
     this.home = {...this.view};
     let drag = null;
     canvas.addEventListener("contextmenu", e => e.preventDefault());
-    canvas.addEventListener("pointerdown", e => { drag = {x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey}; canvas.setPointerCapture(e.pointerId); });
+    // the studio's tool (studio.js: {down, move, up}) takes the left button; Alt with it still turns the model
+    canvas.addEventListener("pointerdown", e => {
+      const tool = this.tool && e.button === 0 && !e.altKey && !e.shiftKey;
+      drag = {x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, tool};
+      canvas.setPointerCapture(e.pointerId);
+      if (tool) this.tool.down(e);
+    });
     canvas.addEventListener("pointermove", e => {
-      if (!drag) return;
+      if (!drag) { if (this.tool && this.tool.hover) this.tool.hover(e); return; }
+      if (drag.tool) { this.tool && this.tool.move(e); return; }
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       drag.x = e.clientX; drag.y = e.clientY;
       const v = this.view;
@@ -557,7 +564,7 @@ class Viewer {
       }
       this.draw();
     });
-    canvas.addEventListener("pointerup", () => { drag = null; });
+    canvas.addEventListener("pointerup", e => { if (drag && drag.tool && this.tool) this.tool.up(e); drag = null; });
     canvas.addEventListener("wheel", e => { e.preventDefault(); this.view.dist *= Math.exp(e.deltaY * 0.001); this.draw(); }, {passive: false});
     canvas.addEventListener("dblclick", () => { this.view = {...this.home, center: [...this.home.center]}; this.draw(); });
   }
@@ -567,6 +574,7 @@ class Viewer {
     const gl = this.gl;
     for (const p of this.parts) {
       gl.deleteVertexArray(p.vao); p.buffers.forEach(b => gl.deleteBuffer(b)); gl.deleteTexture(p.boneTex);
+      if (p.painted) p.painted.forEach(t => gl.deleteTexture(t.tex));
     }
     this.parts = [];
   }
@@ -584,7 +592,7 @@ class Viewer {
     };
     if (typeof src === "string") {
       const img = new Image();
-      img.onload = () => upload(img);
+      img.onload = () => { t.img = img; upload(img); };
       img.onerror = () => { t.failed = true; };
       img.src = src;
     } else {
@@ -673,6 +681,115 @@ class Viewer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
     gl.generateMipmap(gl.TEXTURE_2D);
     this.draw();
+  }
+
+  // A part's batches of one texture (its FileDataID) drawn with a painted copy of it (studio.js) - that part's
+  // only, so another piece of the same art keeps it; a painted batch carries its armor colour (no recolour on
+  // it). null: the art again. The canvas is kept as the part's: painted again, it is uploaded again.
+  paintPart(p, fdid, canvas) {
+    const gl = this.gl;
+    p.painted = p.painted || new Map();
+    const had = p.painted.get(fdid);
+    if (!canvas) {
+      if (had) { gl.deleteTexture(had.tex); p.painted.delete(fdid); }
+    } else {
+      const t = had || {tex: gl.createTexture(), ready: true};
+      gl.bindTexture(gl.TEXTURE_2D, t.tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      t.canvas = canvas;
+      p.painted.set(fdid, t);
+    }
+    for (const b of p.batches) {
+      if (b.texture !== fdid) continue;
+      if (!("art" in b)) b.art = b.tex;
+      b.tex = canvas ? p.painted.get(fdid) : b.art;
+      b.painted = !!canvas;
+    }
+    this.draw();
+  }
+
+  // the pose held where it is (the studio paints a model standing still, as Kira's holds the scene's clock), or let go
+  freeze(on) {
+    this.frozen = on ? (this.frozen ?? (performance.now() - this.start0)) : null;
+    this.draw();
+  }
+
+  // a part's vertices where it was drawn last: each skinned as the vertex program skins it, in the world
+  skinned(p, model) {
+    const n = p.positions.length / 3, out = new Float32Array(n * 3), sk = p.skin, mats = p.mats;
+    const m = new Float32Array(16);
+    for (let i = 0; i < n; i++) {
+      const w = [sk[i * 8], sk[i * 8 + 1], sk[i * 8 + 2], sk[i * 8 + 3]], s = w[0] + w[1] + w[2] + w[3];
+      const x = p.positions[i * 3], y = p.positions[i * 3 + 1], z = p.positions[i * 3 + 2];
+      let px = x, py = y, pz = z;
+      if (s > 0) {
+        m.fill(0);
+        for (let k = 0; k < 4; k++) {
+          if (!w[k]) continue;
+          const bi = sk[i * 8 + 4 + k], f = w[k] / s;
+          for (let e = 0; e < 16; e++) m[e] += f * (mats[bi * 16 + e] ?? IDENT[e]);
+        }
+        px = m[0] * x + m[4] * y + m[8] * z + m[12]; py = m[1] * x + m[5] * y + m[9] * z + m[13];
+        pz = m[2] * x + m[6] * y + m[10] * z + m[14];
+      }
+      out[i * 3] = model[0] * px + model[4] * py + model[8] * pz + model[12];
+      out[i * 3 + 1] = model[1] * px + model[5] * py + model[9] * pz + model[13];
+      out[i * 3 + 2] = model[2] * px + model[6] * py + model[10] * pz + model[14];
+    }
+    return out;
+  }
+
+  // What's under a point of the canvas (client coordinates): the nearest triangle of `only` (every part when
+  // null) drawn - its part, batch, triangle (its first index), where on it, its first UVs there (as the model
+  // holds them) and the point in the world. On the CPU, at the pose drawn last.
+  pick(cx, cy, only = null) {
+    const r = this.canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const nx = (cx - r.left) / r.width * 2 - 1, ny = 1 - (cy - r.top) / r.height * 2;
+    const v = this.view, view = M4.look(this.eye(), v.center, [0, 0, 1]);
+    const inv = M4.inv(M4.mul(M4.persp(0.7, r.width / r.height, v.dist / 200, v.dist * 30), view));
+    const un = z => { const o = [0, 1, 2, 3].map(i => inv[i] * nx + inv[4 + i] * ny + inv[8 + i] * z + inv[12 + i]);
+                      return [o[0] / o[3], o[1] / o[3], o[2] / o[3]]; };
+    const o = un(-1), dir = norm(sub(un(1), o));
+    let best = null;
+    for (const p of this.parts) {
+      if (only && !only.includes(p)) continue;
+      const model = this.modelMatrix(p);
+      if (!model) continue;
+      // the pose held (the studio): its vertices worked out once
+      if (this.frozen == null || p.skinKey !== this.frozen) { p.skinPos = this.skinned(p, model); p.skinKey = this.frozen; }
+      const P = p.skinPos, I = p.indices;
+      for (const b of p.batches) {
+        if (b.missing || !p.visible(b.geoset)) continue;
+        for (let i = b.start; i < b.start + b.count; i += 3) {
+          const ia = I[i] * 3, ib = I[i + 1] * 3, ic = I[i + 2] * 3;
+          const e1 = [P[ib] - P[ia], P[ib + 1] - P[ia + 1], P[ib + 2] - P[ia + 2]];
+          const e2 = [P[ic] - P[ia], P[ic + 1] - P[ia + 1], P[ic + 2] - P[ia + 2]];
+          const h = cross(dir, e2), a = dot(e1, h);
+          if (Math.abs(a) < 1e-12) continue;
+          const f = 1 / a, s = [o[0] - P[ia], o[1] - P[ia + 1], o[2] - P[ia + 2]], u = f * dot(s, h);
+          if (u < 0 || u > 1) continue;
+          const q = cross(s, e1), w = f * dot(dir, q);
+          if (w < 0 || u + w > 1) continue;
+          const t = f * dot(e2, q);
+          if (t > 1e-6 && (!best || t < best.t)) best = {t, part: p, batch: b, index: i, bary: [1 - u - w, u, w]};
+        }
+      }
+    }
+    if (!best) return null;
+    const p = best.part, uv = p.uvs || (p.uvs = b64(p.mesh.uvs, Float32Array)), I = p.indices, [w0, w1, w2] = best.bary;
+    const a = I[best.index], b = I[best.index + 1], c = I[best.index + 2];
+    best.uv = [w0 * uv[a * 2] + w1 * uv[b * 2] + w2 * uv[c * 2], w0 * uv[a * 2 + 1] + w1 * uv[b * 2 + 1] + w2 * uv[c * 2 + 1]];
+    best.point = o.map((x, k) => x + dir[k] * best.t);
+    return best;
+  }
+
+  // an effect's own colour in a colourway (way.fx, by its texture's FileDataID: studio.js), false for one left as
+  // made, else null (its part's colour)
+  fxLook(p, fdid) {
+    const fx = p.opts.colour && p.opts.colour.fx, k = fdid && fx ? fx[fdid] : null;
+    return !k || !window.Colour ? null : k === "off" ? false : Colour.uniform(k);
   }
 
   animated() {
@@ -843,6 +960,8 @@ class Viewer {
 
   update(now) {
     const eye = this.eye();
+    // a new pose: the picking's held vertices are old
+    if (now !== this.posedAt) { this.posedAt = now; for (const p of this.parts) p.skinKey = undefined; }
     for (const p of this.parts) {
       const m = p.mesh;
       // texture animations, colours and transparency
@@ -1216,7 +1335,8 @@ class Viewer {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.pbuf);
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
       this.effectBlend(d.blend);
-      this.setLook(this.pu.lookOn, this.pu.look, this.lookOf(p, "particles"));
+      const own = this.fxLook(p, d.texture);
+      this.setLook(this.pu.lookOn, this.pu.look, own === false ? null : own || this.lookOf(p, "particles"));
       gl.uniform1i(this.pu.multi, multi);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, em.tex.tex);
       if (multi) em.more.forEach((t, i) => this.bindTexture(i ? gl.TEXTURE2 : gl.TEXTURE1, t, [true, true]));
@@ -1290,9 +1410,10 @@ class Viewer {
       }
       gl.bindBuffer(gl.ARRAY_BUFFER, this.pbuf);
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-      this.setLook(this.pu.lookOn, this.pu.look, this.lookOf(p, "ribbons"));
       for (const l of rb.layers) {
         if (!l.tex || !l.tex.ready) continue;
+        const own = this.fxLook(p, l.texture);
+        this.setLook(this.pu.lookOn, this.pu.look, own === false ? null : own || this.lookOf(p, "ribbons"));
         // a ribbon is see-through at least (an opaque material is drawn by alpha)
         this.effectBlend(l.blend === 0 ? 2 : l.blend);
         if (l.mflags & 0x8) gl.disable(gl.DEPTH_TEST); else gl.enable(gl.DEPTH_TEST);
@@ -1372,7 +1493,7 @@ class Viewer {
     const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
     if (!w || !h) return;
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-    const now = performance.now() - this.start0, dt = this.last ? Math.min(0.1, (now - this.last) / 1000) : 0;
+    const now = this.frozen ?? (performance.now() - this.start0), dt = this.last ? Math.min(0.1, Math.max(0, now - this.last) / 1000) : 0;
     this.last = now;
     this.update(now);
     this.particles(now, dt);
@@ -1403,9 +1524,8 @@ class Viewer {
         gl.uniform1i(this.u.uSkinned, 1);
         const fx = this.fxUniforms(p, now);
         gl.uniform1i(this.u.uFx, fx);
-        // a colourway: its armor's colour and its glows'
-        this.setLook(this.u.uLookAOn, this.u.uLookA, this.lookOf(p, "armor"));
-        this.setLook(this.u.uLookGOn, this.u.uLookG, this.lookOf(p, "glows"));
+        // a colourway: its armor's colour and its glows' - an effect with a colour of its own (its texture's) takes that
+        const lookA = this.lookOf(p, "armor"), lookG = this.lookOf(p, "glows");
         gl.bindVertexArray(p.vao);
         for (const b of p.batches) {
           if (b.missing || !p.visible(b.geoset)) continue;
@@ -1457,6 +1577,10 @@ class Viewer {
           gl.uniform1i(this.u.uOpaque, mode === 0 && tint[3] >= 1 ? 1 : 0);
           // a batch that adds itself (add, blend-add, an unlit see-through one) or an item glow's: a glow
           gl.uniform1i(this.u.uGlowBatch, p.opts.ghost || [3, 4, 7].includes(b.blend) || (b.unlit && b.blend >= 2) ? 1 : 0);
+          // an effect's own colour on what glows (the same texture's armor keeps the armor's)
+          const glow = p.opts.ghost || [3, 4, 7].includes(b.blend) || (b.unlit && b.blend >= 2), own = glow ? this.fxLook(p, b.texture) : null;
+          this.setLook(this.u.uLookAOn, this.u.uLookA, b.painted ? null : lookA);
+          this.setLook(this.u.uLookGOn, this.u.uLookG, own === false ? null : own || lookG);
           if (fx) {
             // the texture's alpha is the opacity of any but an opaque batch; an alpha key cuts at its reference
             gl.uniform4fv(this.u.uFxModes, [b.blend ? 1 : 0, b.blend === 1 ? 0.5 : 0, 0, 0]);

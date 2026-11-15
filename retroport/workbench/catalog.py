@@ -518,13 +518,16 @@ def look_key(display, way: dict | None = None) -> str:
 
 
 def look_stamp(look: dict) -> str:
-    """A planned look as a build records it: its key, and a colourway's colours (new colours: built again)."""
+    """A planned look as a build records it: its key, and a colourway's colours, its effects' and its paint (new
+    colours or paint: built again)."""
     key = look.get("look_key") or str(look.get("display") or "")
     way = look.get("colour")
     if not isinstance(way, dict):
         return key
     import hashlib
-    blob = json.dumps({"colour": way.get("colour"), "parts": way.get("parts"), "name": way.get("name")}, sort_keys=True)
+    blob = json.dumps({"colour": way.get("colour"), "parts": way.get("parts"), "name": way.get("name"),
+                       **({"fx": way["fx"]} if way.get("fx") else {}), **({"paint": way["paint"]} if way.get("paint") else {})},
+                      sort_keys=True)
     return f"{key}#{hashlib.sha1(blob.encode()).hexdigest()[:10]}"
 
 

@@ -468,7 +468,10 @@ def colour_entry(item: int, modifier: int, way: str, spare: dict[str, int]) -> i
 # The colourways' table the client reads (its equipment recolour): a line a colourway - its own display id
 # (the one its item_template row has), the retail display it is a recolour of, then its armor's, glows',
 # particles' and ribbons' colours, tab-separated, each "hue,saturation,brightness,dye" (hue in degrees,
-# saturation 0-1, brightness 0-255 with 128 as made, dye 0-1) or "-" as Blizzard made it. "#" a comment.
+# saturation 0-1, brightness 0-255 with 128 as made, dye 0-1) or "-" as Blizzard made it. Then (the studio,
+# studio.js) its effects' own colours - "texture=colour" pairs joined by "|", the texture as the client names it
+# (``fx_key``), the colour as above or "-" (as made) - and its painted textures - "FileDataID=path" pairs joined
+# by "|", the painted copy the client draws for that texture (paint.py) - each "-" when it has none. "#" a comment.
 # The client draws the display as the retail one it names, recoloured - wherever the item is drawn (worn,
 # character select, inspect, other players), since all it has there is the display id.
 COLOUR_TABLE = "DBFilesClient\\WxlItemColours.txt"
@@ -488,8 +491,18 @@ def part_colour(way: dict, part: str) -> dict | None:
     return way.get("colour") if p == "same" else p if isinstance(p, dict) else None
 
 
-def colour_table(pieces: list) -> bytes | None:
-    """``COLOUR_TABLE`` for the pieces that are colourways (None when none is)."""
+def fx_key(path: str) -> str:
+    """A texture as the client's colour table names it for an effect's colour: its path in lower case, backslashes,
+    no extension (the client matches it against the file name a texture was loaded from)."""
+    p = path.replace("/", "\\").lower()
+    dot, slash = p.rfind("."), p.rfind("\\")
+    return p[:dot] if dot > slash else p
+
+
+def colour_table(pieces: list, paths: dict[int, str] | None = None,
+                 swaps: dict[int, dict[int, str]] | None = None) -> bytes | None:
+    """``COLOUR_TABLE`` for the pieces that are colourways (None when none is). ``paths``: where each texture is
+    (an effect's own colour names its texture's path); ``swaps``: each colourway's painted textures (paint.bake)."""
     def num(v, lo, hi, default):
         try:
             v = float(v)
@@ -503,12 +516,30 @@ def colour_table(pieces: list) -> bytes | None:
         vals = (num(k.get("hue"), 0, 360, 0) % 360, num(k.get("sat"), 0, 1, 1), num(k.get("light"), 0, 255, 128),
                 num(k.get("dye"), 0, 1, 0))
         return ",".join(f"{v:.4g}" for v in vals)
-    lines = [f"{colour_display(p.entry)}\t{p.display}\t" + "\t".join(fmt(part_colour(p.colour, part)) for part in COLOUR_PARTS)
+    def effects(way):
+        fx = way.get("fx") if isinstance(way.get("fx"), dict) else {}
+        out = []
+        for f, k in sorted(fx.items(), key=lambda t: str(t[0])):
+            try:
+                path = (paths or {}).get(int(f))
+            except (TypeError, ValueError):
+                continue
+            if path and (k == "off" or isinstance(k, dict)):
+                out.append(f"{fx_key(path)}={'-' if k == 'off' else fmt(k)}")
+        return "|".join(out) or "-"
+
+    def painted(p):
+        own = (swaps or {}).get(p.entry) or {}
+        return "|".join(f"{f}={path}" for f, path in sorted(own.items())) or "-"
+
+    lines = [f"{colour_display(p.entry)}\t{p.display}\t" + "\t".join(fmt(part_colour(p.colour, part)) for part in COLOUR_PARTS) +
+             f"\t{effects(p.colour)}\t{painted(p)}"
              for p in pieces if isinstance(getattr(p, "colour", None), dict)]
     if not lines:
         return None
     head = ["# Retroport Workbench colourways: display, the retail display it recolours, then armor, glows, particles, ribbons",
-            "# each hue (degrees),saturation (0-1),brightness (0-255, 128 as made),dye (0-1) - or - as made"]
+            "# each hue (degrees),saturation (0-1),brightness (0-255, 128 as made),dye (0-1) - or - as made; then its effects'",
+            "# own colours (texture=colour|...) and its painted textures (FileDataID=path|...), - for none"]
     return ("\r\n".join(head + lines) + "\r\n").encode("ascii")
 
 

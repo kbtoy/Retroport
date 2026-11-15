@@ -174,6 +174,9 @@ async function openItem(id, back = null, look = 0) {
                     name: `${d.name} (${[versionName(cur), way.name].filter(Boolean).join(" - ")})`, icon: cur.icon || d.icon,
                     quality: d.quality, sub: itemKind(d), colour: copyWay(way)}),
     saved: () => S.basket.filter(e => e.kind === "item" && e.source === S.source && e.id === d.id && e.colour && e.look === cur.display),
+    pb: preview.pb,
+    // opened from a collection of yours, the version it holds: its colourway is the piece's
+    store: () => back && back.piece && cur.display === back.piece.p.display ? CollectionsUI.pieceStore(back.piece.c, back.piece.p) : null,
   }) : null;
   if (d.appearances.length > 1) {
     const chips = versionChips(d.appearances.map(a => ({
@@ -333,7 +336,7 @@ async function openSet(id, kind = "transmog") {
       what: d.name, version: () => d.label || "", show: way => previewColour(preview.pb, way),
       entry: way => ({kind: "set", source: S.source, id: d.id, name: `${d.name} (${[d.label, way.name].filter(Boolean).join(" - ")})`,
                       icon: d.icon, sub: [d.label, d.group].filter(Boolean).join(" · "), colour: copyWay(way)}),
-      saved: () => S.basket.filter(e => e.kind === "set" && e.source === S.source && e.id === d.id && e.colour)}));
+      saved: () => S.basket.filter(e => e.kind === "set" && e.source === S.source && e.id === d.id && e.colour), pb: preview.pb}));
   }
   body.push(list, el("div", {class: "actions"}, actions));
   showDrawer(body);
@@ -1073,6 +1076,7 @@ function previewBox(cls = "") {
   const box = el("div", {class: "preview" + (cls ? " " + cls : "")});
   const v = previewViewer();
   if (!v) { box.append(el("div", {class: "muted"}, PV.error || "No WebGL")); return {box, load: () => {}, add: () => false}; }
+  if (v.tool) { v.tool = null; v.canvas.classList.remove("painting"); v.freeze(false); }
   const pb = {box, v, info: el("div", {class: "pv-info muted"}, "Loading…"), textures: el("div", {class: "pv-body"}), current: null,
               controls: el("div", {class: "pv-controls"}, raceSexPicker(() => pb.current && pb.current()))};
   pb.load = fn => { pb.current = fn; fn(); };
@@ -1093,10 +1097,34 @@ function previewColour(pb, way) {
   pb.colour = way;
   if (!pb.v) return;
   pb.v.setColour(pb.parts || [], way);
-  if (pb.repaint) {
-    clearTimeout(pb.repaintTimer);
-    pb.repaintTimer = setTimeout(() => pb.repaint(way), 120);
+  clearTimeout(pb.repaintTimer);
+  pb.repaintTimer = setTimeout(() => { previewPaint(pb, way, null, null, false); if (pb.repaint) pb.repaint(way); }, 120);
+}
+
+// A colourway's paint (studio.js) on a preview's models: each texture of a model that the colourway paints drawn
+// painted - over its armor colour, as Install bakes it - and one no longer painted as made; the body's skin and cape
+// composited again (body: false leaves them). only: that texture alone (a stroke being drawn); list: the paint to
+// show (else the colourway's). The newest call for a texture wins.
+async function previewPaint(pb, way, only = null, list = null, body = true) {
+  const v = pb.v;
+  if (!v || !window.Colour || !window.Studio) return;
+  const ops = list || (way && way.paint) || [], k = way ? Colour.partColour(way, "armor") : null;
+  pb.paintTokens = pb.paintTokens || {};
+  const key = only || "*", token = pb.paintTokens[key] = (pb.paintTokens[key] || 0) + 1;
+  for (const p of pb.parts || []) {
+    if (p.opts.ghost || !p.opts.texUrl || p.opts.colour !== way) continue;
+    for (const f of new Set(p.batches.filter(b => b.texture && b.texture_type !== 0).map(b => b.texture))) {
+      if (only && f !== only) continue;
+      const mine = ops.filter(o => o.tex === f);
+      if (!mine.length) { if (p.painted && p.painted.has(f)) v.paintPart(p, f, null); continue; }
+      let a;
+      try { a = await Studio.artOf(p.opts.texUrl(f)); } catch (e) { continue; }
+      if (pb.paintTokens[key] !== token) return;
+      v.paintPart(p, f, Colour.paintImage(a.img, mine, k));
+    }
   }
+  if (body && pb.repaint && (!only || (pb.skin && pb.skin.layers.some(l => l.fdid === only)) || (pb.cape && pb.cape.fdid === only)))
+    pb.repaint(way, list);
 }
 
 // One display: its models alone; with none, the piece on a character (a cloak seen from behind) - in the
@@ -1118,6 +1146,7 @@ function loadDisplay(pb, display, slot, from = null) {
         if (!got) return;
         v.fit(cape ? "back" : "front");
         v.draw();
+        partsIn(pb);
         pb.info.textContent = `On ${/^[aeiou]/i.test(got.who) ? "an" : "a"} ${got.who} · ` +
           (cape ? "a cloak, drawn on the body's cape" : "drawn on the body - its textures below");
         notes(pb.info, got.outfit.problems);
@@ -1137,6 +1166,7 @@ function loadDisplay(pb, display, slot, from = null) {
       v.fit(HELD.includes(slot) ? "held" : "front", slot);
       v.canvas.hidden = !p.models.length;
       v.draw();
+      partsIn(pb);
       const tris = p.models.reduce((n, m) => n + m.mesh.triangles, 0);
       pb.info.textContent = p.models.length ? `${plural(p.models.length, "model")} · ${tris.toLocaleString()} triangles` +
         (p.body.length ? " · plus textures on the body" : "") +
@@ -1145,6 +1175,11 @@ function loadDisplay(pb, display, slot, from = null) {
       notes(pb.info, p.problems);
     } catch (e) { if (token === PV.token) pb.info.textContent = e.message; }
   });
+}
+// A preview's models are in: its colourway's paint on them, and its colour editor lists their effects
+function partsIn(pb) {
+  if (pb.colour && (pb.colour.paint || []).length) previewPaint(pb, pb.colour, null, null, false);
+  if (pb.editor && pb.editor.effectsChanged) pb.editor.effectsChanged();
 }
 function notes(info, lines) { for (const l of lines || []) info.append(el("div", {class: "warnline"}, l)); }
 // A display's retail item glows (its ItemVisual: what the client hangs on the item, /api/preview's
@@ -1236,25 +1271,34 @@ function shows(a, id, hair) {
   const want = g in a ? a[g] : 1;
   return want >= 0 && v === want;
 }
-// The skin as the client composites it: the body's layers, then each piece's section textures - the pieces'
-// in a colourway's armor colour. The canvas's paint(way) composites it again in another.
-async function compositeSkin(body, outfit, source, way = null) {
+// The skin as the client composites it: the body's layers, then each piece's section textures - the pieces' in
+// their colourway (a piece's own, `wayOf(piece)`, else the preview's): its paint, over its armor colour. The
+// canvas's paint(way, list) composites it again in another (list: the paint to show for the preview's colourway);
+// its layout and layers tell the studio where on the skin each piece's texture is.
+async function compositeSkin(body, outfit, source, way = null, wayOf = () => null) {
   const L = body.layout, c = document.createElement("canvas");
   c.width = L.width; c.height = L.height;
-  // [section, url, a piece's?, blend]: a retail body's layers carry the client's blend (1 pastes, 4 multiplies,
-  // 6 overlays, 7 screens, else by alpha); BfA's CharSections and the pieces' blend by alpha
-  const draws = body.skin.map(([sec, fdid, blend]) => [sec, `/tex/${body.source || "bfa"}/${fdid}.png`, false, blend || 9]);
+  // [section, url, a piece's?, blend, fdid, the piece's own colourway]: a retail body's layers carry the client's
+  // blend (1 pastes, 4 multiplies, 6 overlays, 7 screens, else by alpha); BfA's CharSections and the pieces' blend by alpha
+  const draws = body.skin.map(([sec, fdid, blend]) => [sec, `/tex/${body.source || "bfa"}/${fdid}.png`, false, blend || 9, fdid, null]);
   for (const slot of outfit.dress_order) for (const pc of outfit.pieces.filter(p => p.slot === slot))
-    for (const t of pc.body) draws.push([t.section, `/tex/${source}/${t.fdid}.png`, true, 9]);
+    for (const t of pc.body) draws.push([t.section, `/tex/${source}/${t.fdid}.png`, true, 9, t.fdid, wayOf(pc)]);
   const imgs = await Promise.all(draws.map(([, u]) => loadImage(u).catch(() => null)));
   const OPS = {4: "multiply", 6: "overlay", 7: "screen"};
-  c.paint = w => {
-    const k = window.Colour ? Colour.partColour(w, "armor") : null, ctx = c.getContext("2d");
+  c.layout = L;
+  c.layers = draws.map(([sec, url, piece, , fdid], i) => ({sec, url, piece, fdid, img: imgs[i]}));
+  c.paint = (w, list = null) => {
+    const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, L.width, L.height);
-    draws.forEach(([sec, , piece, blend], i) => {
+    draws.forEach(([sec, , piece, blend, fdid, own], i) => {
       let img = imgs[i];
       if (!img) return;
-      if (piece && k) img = Colour.image(img, k);
+      if (piece && window.Colour) {
+        const pw = own || w, k = Colour.partColour(pw, "armor");
+        const ops = ((own ? null : list) || (pw && pw.paint) || []).filter(o => o.tex === fdid);
+        if (ops.length) img = Colour.paintImage(img, ops, k);
+        else if (k) img = Colour.image(img, k);
+      }
       const r = sec < 0 ? [0, 0, L.width, L.height] : L.sections[sec];
       if (!r) return;
       if (blend === 1) ctx.clearRect(r[0], r[1], r[2], r[3]);       // a paste: what it covers is its own
@@ -1274,16 +1318,19 @@ async function dress(v, pieces, token, from = null, pb = null) {
   const [body, outfit] = await Promise.all([bodyOf(race, sex),
     api("/api/outfit", {source, race, sex, items: pieces.map(p => `${p.display}:${p.slot}`).join(",")})]);
   if (token !== PV.token) return null;
-  const skin = await compositeSkin(body, outfit, source, way);
+  // a piece in colours of its own (a collection's): its colourway, else the preview's
+  const wayOf = pc => (pieces.find(p => p.display === pc.display && p.colour) || {}).colour || null;
+  const skin = await compositeSkin(body, outfit, source, way, wayOf);
   const cape = outfit.pieces.find(p => p.cape);
-  // a cloak's cape texture, in the colourway's armor colour
+  // a cloak's cape texture, in its colourway: its paint over its armor colour
   const capeImg = cape ? await loadImage(`/tex/${source}/${cape.cape}.png`).catch(() => null) : null;
   const capeCanvas = capeImg ? el("canvas", {width: capeImg.width, height: capeImg.height}) : null;
-  const paintCape = w => {
+  const paintCape = (w, list = null) => {
     if (!capeCanvas) return;
-    const k = window.Colour ? Colour.partColour(w, "armor") : null, x = capeCanvas.getContext("2d");
+    const own = wayOf(cape), pw = own || w, k = window.Colour ? Colour.partColour(pw, "armor") : null, x = capeCanvas.getContext("2d");
+    const ops = window.Colour ? ((own ? null : list) || (pw && pw.paint) || []).filter(o => o.tex === cape.cape) : [];
     x.clearRect(0, 0, capeCanvas.width, capeCanvas.height);
-    x.drawImage(k ? Colour.image(capeImg, k) : capeImg, 0, 0);
+    x.drawImage(ops.length ? Colour.paintImage(capeImg, ops, k) : k ? Colour.image(capeImg, k) : capeImg, 0, 0);
   };
   paintCape(way);
   if (token !== PV.token) return null;
@@ -1300,19 +1347,24 @@ async function dress(v, pieces, token, from = null, pb = null) {
   let models = 0;
   // what's worn in the client's order, then what's held (in the hands, a shield on the arm)
   for (const slot of [...outfit.dress_order, ...HELD]) for (const pc of outfit.pieces.filter(p => p.slot === slot)) for (const m of pc.models) {
+    const pw = wayOf(pc) || way;
     if (m.type === 1) {
-      parts.push(v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, particle: pc.particle, colour: way,
+      parts.push(v.add(m.mesh, {texUrl: texUrl(source), bodyOf: bodyPart, particle: pc.particle, colour: pw,
                                 visible: id => collectionShows(slot, pc.row, id)}));
     } else if (m.attach >= 0) {
       const part = v.add(m.mesh, {texUrl: texUrl(source), attach: {part: bodyPart, id: m.attach}, particle: pc.particle,
-                                  colour: way, visible: id => attachedShows(slot, pc.row, id)});
-      parts.push(part, ...addGlows(v, part, pc.glows, source, way));
+                                  colour: pw, visible: id => attachedShows(slot, pc.row, id)});
+      parts.push(part, ...addGlows(v, part, pc.glows, source, pw));
     }
     models++;
   }
   if (pb) {
     pb.parts = parts;
-    pb.repaint = w => { skin.paint(w); v.refreshTexture(skin); paintCape(w); if (capeCanvas) v.refreshTexture(capeCanvas); v.draw(); };
+    pb.repaint = (w, list = null) => { skin.paint(w, list); v.refreshTexture(skin); paintCape(w, list); if (capeCanvas) v.refreshTexture(capeCanvas); v.draw(); };
+    pb.skin = skin; pb.bodyPart = bodyPart;
+    pb.cape = capeImg ? {fdid: cape.cape, url: `/tex/${source}/${cape.cape}.png`, w: capeImg.width, h: capeImg.height} : null;
+    // each piece's own paint (a collection's pieces) on its models
+    for (const pc of outfit.pieces) { const own = wayOf(pc); if (own && (own.paint || []).length) previewPaint({...pb, colour: own}, own, null, null, false); }
   }
   v.canvas.hidden = false;
   const name = d => (pieces.find(p => p.display === d) || {}).name || `display ${d}`;
@@ -1332,6 +1384,7 @@ function characterSection(pieces, from = null) {
       if (!got) return;
       v.fit("front");
       v.draw();
+      partsIn(pb);
       pb.info.textContent = `${got.who} · ${plural(got.outfit.pieces.length, "piece")} · ${plural(got.models, "model")}`;
       notes(pb.info, got.outfit.problems);
     } catch (e) { if (token === PV.token) pb.info.textContent = e.message; }
