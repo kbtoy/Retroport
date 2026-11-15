@@ -71,3 +71,41 @@ def test_the_colour_table_names_effects_and_painted_textures():
     fields = line.split("\t")
     assert fields[6] == "item\\objectcomponents\\weapon\\felo_glow=-|spells\\fire_glow=10,0.5,128,0"   # 5: no path, left out
     assert fields[7] == "7413812=item\\objectcomponents\\weapon\\felo_p16000000.blp"
+
+
+# -- a mount's colourways -------------------------------------------------------------------------------------------
+from retroport.workbench import mountpack as MP  # noqa: E402
+from retroport.workbench import mounts as MT  # noqa: E402
+
+
+def test_a_mount_colourway_is_a_mount_of_its_own_in_the_basket():
+    way = {"key": "c1", "name": "Fel", "colour": BASE}
+    got = MT.basket_mounts([{"kind": "mount", "source": "r", "id": 7}, {"kind": "mount", "source": "r", "id": 7, "colour": way},
+                            {"kind": "mount", "source": "r", "id": 7, "colour": way}])
+    assert [bool(e.get("colour")) for e in got] == [False, True]
+
+
+def test_a_mount_colourways_skins_are_baked_beside_them():
+    runs = P.base64.b64encode(bytes([255, 64, 0])).decode()
+    way = {"key": "c1", "colour": BASE, "parts": {"armor": "off"},
+           "paint": [{"tex": 42, "size": [8, 8], "rect": [0, 0, 8, 8], "runs": runs, "colour": K, "ref": 0.5}]}
+    tex = {0: "creature\\horse\\horse_skin.blp", 1: "creature\\horse\\horse_mane.blp"}
+    notes = []
+    src = types.SimpleNamespace(try_read=lambda f: (_blp(), ""))
+    baked = MP._baked_skins(way, {0: 42, 1: 43}, tex, 250012, src, "Horse (Fel)", notes)
+    # the painted skin only: the mane, not painted, stays as it is (the client colours it)
+    assert list(baked) == [0] and tex[0] == "creature\\horse\\horse_skin_p250012.blp" and tex[1].endswith("horse_mane.blp")
+    tex2 = {0: "creature\\horse\\horse_skin.blp", 1: "creature\\horse\\horse_mane.blp"}
+    assert list(MP._baked_skins(dict(way, parts={}), {0: 42, 1: 43}, tex2, 250012, src, "Horse", notes)) == [0]
+
+
+def test_a_mount_colourways_live_colours_are_its_own_line():
+    way = {"key": "c1", "colour": {"hue": 140, "sat": 1, "light": 180, "dye": 0}, "fx": {"77": "off"}}
+    rides = [types.SimpleNamespace(id=250012, way=way, retail={"baked_paths": {42: "creature\\retroport\\horse\\skin_p250012.blp"}}),
+             types.SimpleNamespace(id=250013, way=None, retail={})]
+    text = MP.creature_colours(rides, {77: ("texture", "creature\\horse\\glow.blp")}).decode()
+    line, = [l for l in text.splitlines() if not l.startswith("#")]
+    # its CreatureDisplayInfo id, 0, its colours (armor live), its effect's, its painted skin (not recoloured again)
+    assert line == ("250012\t0\t140,1,180,0\t140,1,180,0\t140,1,180,0\t140,1,180,0\tcreature\\horse\\glow=-\t"
+                    "42=creature\\retroport\\horse\\skin_p250012.blp")
+    assert MP.creature_colours([rides[1]], {}) is None

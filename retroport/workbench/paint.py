@@ -184,6 +184,16 @@ def painted_path(path: str, entry: int) -> str:
     return f"{folder}\\{stem}_p{entry}{tail}{ext or '.blp'}" if folder else f"{stem}_p{entry}{tail}{ext or '.blp'}"
 
 
+def bake_texture(data: bytes, ops: list[dict], base: dict | None, name: str = "<texture>") -> bytes:
+    """A BLP painted (``paint_rgba``: ``base`` the armor colour, ``ops`` its strokes on it) as a BLP (DXT)."""
+    from PIL import Image
+
+    from ..formats import blp as BLP
+    img = BLP.decode_bytes(data, name).convert("RGBA")
+    w, h = img.size
+    return BLP.encode_dxt(Image.frombytes("RGBA", (w, h), bytes(paint_rgba(img.tobytes(), w, h, ops, base))))
+
+
 def ops_of(way: dict | None) -> list[dict]:
     """A colourway's paint operations (well-formed ones)."""
     out = []
@@ -198,9 +208,6 @@ def bake(pieces: list, paths: dict[int, str], read, say=print) -> tuple[dict[str
     """Each colourway's painted textures: ({path in the patch: BLP}, {colourway entry: {texture FileDataID: its
     painted copy's path}}). ``pieces``: retailpack.Piece (``colour``, ``entry``); ``paths``: where each texture
     is in the patch or the client; ``read(fdid)`` -> (bytes or None, why)."""
-    from PIL import Image
-
-    from ..formats import blp as BLP
     from .retailpack import part_colour
 
     made: dict[str, bytes] = {}
@@ -221,16 +228,12 @@ def bake(pieces: list, paths: dict[int, str], read, say=print) -> tuple[dict[str
                 say(f"!  {p.name}: texture {fdid} isn't readable ({why}) - its paint is left out")
                 continue
             try:
-                img = BLP.decode_bytes(data, f"texture {fdid}").convert("RGBA")
+                baked = bake_texture(data, [op for op in ops if int(op["tex"]) == fdid], base, f"texture {fdid}")
             except ValueError as e:
                 say(f"!  {p.name}: {e} - its paint is left out")
                 continue
-            w, h = img.size
-            mine = [op for op in ops if int(op["tex"]) == fdid]
-            px = paint_rgba(img.tobytes(), w, h, mine, base)
-            out = Image.frombytes("RGBA", (w, h), bytes(px))
             target = painted_path(path, p.entry)
-            made[target] = BLP.encode_dxt(out)
+            made[target] = baked
             swaps.setdefault(p.entry, {})[fdid] = target
         if p.entry in swaps:
             say(f"   {p.name}: {len(ops)} paint stroke(s) baked into {len(swaps[p.entry])} texture(s)")
