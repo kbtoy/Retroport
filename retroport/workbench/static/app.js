@@ -419,11 +419,21 @@ async function openMount(id, display = 0) {
           chosen = d; showIds(d); loadMount(pb, d);
           const e = S.basket.find(x => keyOf(x) === k);
           if (e && e.display !== d) { e.display = d; saveBasket(); }     // the basket rides the look picked
+          if (colours) colours.switched();
         }}))));
     }
     loadMount(pb, chosen);
     body.push(pb.box);
   }
+  // its colourways: its skins in colours of their own and painted (baked at Install), its glows, particles and
+  // ribbons recoloured by the client - each a mount of its own beside the one it's made from
+  const colours = pb.v && window.Colour ? colourSection({
+    what: m.name, version: () => m.displays.length > 1 ? `Look ${m.displays.indexOf(chosen) + 1}` : "", pb,
+    show: way => previewColour(pb, way),
+    entry: way => ({...mountEntry(m, chosen), name: `${m.name} (${way.name || "Custom"})`, colour: copyWay(way)}),
+    saved: () => S.basket.filter(e => e.kind === "mount" && e.source === S.source && e.id === m.id && e.colour && e.display === chosen),
+  }) : null;
+  if (colours) body.push(colours);
   if (m.description) body.push(section("About", el("div", {class: "d-sub"}, m.description)));
   if (m.source_text) body.push(section("Where retail has it", el("div", {class: "d-sub"}, m.source_text.replace(/\|[cCrR][0-9a-fA-F]{0,8}|\|n/g, " "))));
   body.push(section("Ids", ids));
@@ -452,15 +462,17 @@ function loadMount(pb, display) {
       const p = await api("/api/mount/preview", {source: S.source, display});
       if (token !== PV.token) return;
       v.clear();
+      pb.parts = [];
       pb.textures.replaceChildren(...p.textures.map(f => textureThumb(S.source)({fdid: f, name: String(f)})));
       if (p.mesh) {
         // its state kit as the x64 client draws it: the gradient or dissolve over the mount, the kit's
         // models (a banner, a mist) at their points, each scaled, turned, moved and faded as the kit says
-        const mount = v.add(p.mesh, {texUrl: texUrl(S.source), particle: p.particle,
+        const mount = v.add(p.mesh, {texUrl: texUrl(S.source), particle: p.particle, colour: pb.colour,
           fx: p.gradient || p.dissolve ? {gradient: p.gradient, dissolve: p.gradient ? null : p.dissolve} : null, visible: id => {
             const want = p.geosets[Math.floor(id / 100)];
             return want == null || id === want;
           }});
+        pb.parts = [mount];
         // (no attachment, 255, is the base, 19 - the mount's root where it hasn't one)
         for (const s of p.state || []) {
           const id = s.attachment === 255 ? 19 : s.attachment;
@@ -471,6 +483,7 @@ function loadMount(pb, display) {
       }
       v.canvas.hidden = !p.mesh;
       v.draw();
+      if (p.mesh) partsIn(pb);
       pb.info.textContent = p.mesh ? `${p.mesh.triangles.toLocaleString()} triangles` : "No model found.";
       notes(pb.info, p.problems);
     } catch (e) { if (token === PV.token) pb.info.textContent = e.message; }

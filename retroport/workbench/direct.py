@@ -364,6 +364,10 @@ class Direct:
                 files.aliases.append((path, v))
         files.dbc.update(built.tables)
         files.rides = built.rides
+        colours = MP.creature_colours(built.rides, built.paths)     # its colourways' live colours
+        if colours:
+            files.made[MP.CREATURE_COLOURS] = colours
+            self.say(f"   {sum(1 for r in built.rides if r.way)} mount colourway(s): {MP.CREATURE_COLOURS}")
         self.mount_built = built
         path = os.path.join(self.work, "out", "sql", MP.DIRECT_SQL)
         with open(path + ".part", "w", encoding="utf-8", newline="\n") as fh:

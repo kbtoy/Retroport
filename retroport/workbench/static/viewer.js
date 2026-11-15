@@ -1412,7 +1412,7 @@ class Viewer {
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
       for (const l of rb.layers) {
         if (!l.tex || !l.tex.ready) continue;
-        const own = this.fxLook(p, l.texture);
+        const own = this.fxLook(p, rb.layers[0].texture);       // a ribbon's layers coloured together (its first texture's)
         this.setLook(this.pu.lookOn, this.pu.look, own === false ? null : own || this.lookOf(p, "ribbons"));
         // a ribbon is see-through at least (an opaque material is drawn by alpha)
         this.effectBlend(l.blend === 0 ? 2 : l.blend);

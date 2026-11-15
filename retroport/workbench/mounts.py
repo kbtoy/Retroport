@@ -702,6 +702,7 @@ class Ride:
     dissolve: dict | None = None                 # its state kit's dissolve (``state_dissolves``; layers' "path" once placed)
     bank: float | None = None                    # retail's MountMaxBankingAngle (degrees; 45 the usual)
     particle: list[int] | None = None            # its ParticleColor row's nine colours (``PARTICLE_TABLE``; None: none)
+    way: dict | None = None                      # a colourway of the mount (colourway.js): a mount of its own
 
 
 @dataclass
@@ -1034,8 +1035,10 @@ def basket_mounts(entries: list[dict]) -> list[dict]:
     """The mounts of a basket (entries of kind "mount"), once each."""
     out, seen = [], set()
     for e in entries:
-        if e.get("kind") == "mount" and (e.get("source"), e.get("id")) not in seen:
-            seen.add((e.get("source"), e.get("id")))
+        way = e.get("colour") if isinstance(e.get("colour"), dict) else None
+        key = (e.get("source"), e.get("id"), way.get("key") if way else None)     # a colourway: a mount of its own
+        if e.get("kind") == "mount" and key not in seen:
+            seen.add(key)
             out.append(e)
     return out
 

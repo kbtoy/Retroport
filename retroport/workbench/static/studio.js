@@ -211,7 +211,8 @@ const Studio = (() => {
     for (const p of pb.parts || []) {
       for (const b of p.batches) if (glowBatch(p, b)) add(p, b.texture, "glow");
       for (const em of p.emitters || []) add(p, em.def.texture, "particles");
-      for (const rb of p.ribbons || []) for (const l of rb.layers) add(p, l.texture, "ribbon");
+      // a ribbon by its first texture, as the client colours its layers together
+      for (const rb of p.ribbons || []) if (rb.layers.length) add(p, rb.layers[0].texture, "ribbon");
     }
     return [...out.values()];
   }

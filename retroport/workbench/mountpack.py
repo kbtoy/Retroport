@@ -23,9 +23,16 @@ from dataclasses import dataclass, field
 
 from . import itemids
 from . import mounts as MT
+from . import paint as PT
 from . import retailpack as RP
 
 DIRECT_SQL = "retail-direct-mounts.sql"
+# A mount's colourways (colourway.js; the studio paints them, studio.js): each a mount of its own - its spell, item,
+# creature and display - its painted skins baked (paint.py: its armor colour and paint, as copies beside them), and
+# its colours - armor, glows, particles, ribbons, each effect's own - in the client's table of them: a line a mount,
+# its CreatureDisplayInfo id, 0, then the columns of retailpack.COLOUR_TABLE (its painted column: the baked skins,
+# which the client doesn't recolour again).
+CREATURE_COLOURS = "DBFilesClient\\WxlCreatureColours.txt"
 
 
 @dataclass
@@ -181,10 +188,10 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
             say(f"!  {e.get('name') or e.get('id')}: not a mount of retail {catalog.build} - left out")
             continue
         display = chosen_display(e, row)
-        rows.append((row, display, catalog.displays.get(display) or {}))
+        rows.append((row, display, catalog.displays.get(display) or {}, e))
     snd = catalog.sounds or {}
     want = set()
-    for _row, _d, dd in rows:
+    for _row, _d, dd, _e in rows:
         want |= {dd.get("model") or 0, *(dd.get("textures") or [])}
         want |= {st.get("model") or 0 for st in dd.get("state") or []}
         want |= {layer.get("texture") or 0 for layer in (dd.get("dissolve") or {}).get("layers") or []}
@@ -194,9 +201,9 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
             kits |= {a, b}
         for k in kits:
             want |= {f for f, _w in ((snd.get("kits") or {}).get(str(k)) or [[]] * 7)[6]}
-    want |= {row[MT.F["icon"]] for row, _d, _dd in rows}
+    want |= {row[MT.F["icon"]] for row, _d, _dd, _e in rows}
     names = RP.listfile_names(listfile, {f for f in want if f})
-    icons = {f: MT.icon_name(names[f]) for f in {row[MT.F["icon"]] for row, _d, _dd in rows} if f in names}
+    icons = {f: MT.icon_name(names[f]) for f in {row[MT.F["icon"]] for row, _d, _dd, _e in rows} if f in names}
 
     cd, above = _client(client_dir, patch)
     try:
@@ -242,16 +249,24 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
     cmd = tables["CreatureModelData"]
 
     rides, new_icons, ship_icons, sound_of = [], {}, {}, {}
-    for row, display, dd in rows:
+    for row, display, dd, e in rows:
         name, kind = row[MT.F["name"]], row[MT.F["kind"]]
+        item_name = row[MT.F["item_name"]]
         model = dd.get("model") or 0
         if not model or model not in names:
             say(f"!  {name}: its model (FileDataID {model}) isn't in the listfile - left out")
             continue
-        got = MT.allocate(ids, row[0], taken, items_taken)
+        # a colourway: a mount of its own (its ids kept under the mount's and the colourway's key), named after it
+        way = e.get("colour") if isinstance(e.get("colour"), dict) else None
+        key = f"{row[0]}~{way.get('key') or ''}" if way else row[0]
+        if way:
+            cname = way.get("name") or "Custom"
+            name, item_name = f"{name} ({cname})", f"{item_name or row[MT.F['name']]} ({cname})"
+        got = MT.allocate(ids, key, taken, items_taken)
         client_model = os.path.splitext(MT.relocate(names[model]))[0] + ".m2"
         tex_ids = {i: f for i, f in enumerate((dd.get("textures") or [])[:len(MT.SKIN_TYPES)]) if f}
         tex = {i: names.get(f, f"{os.path.dirname(names[model])}\\wxl_{f}.blp") for i, f in tex_ids.items()}
+        baked = _baked_skins(way, tex_ids, tex, got["id"], source, name, notes) if way else {}
         tnames, _files = MT.texture_names(client_model, tex)
         packed, lost = MT.geoset_data(dd.get("geosets"))
         if lost:
@@ -267,22 +282,23 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
                 ship_icons[f"interface\\icons\\{iname}.blp".lower()] = icon_fdid
             item_icon = iname if item_rows_ok else ""
         stock_item = next((stock_items[n] for n in MT.ITEM_ICONS[kind] if n in stock_items), None)
-        item_display = MT.display_id(ids, row[0], display_taken) if item_icon else (stock_item or [0])[0]
+        item_display = MT.display_id(ids, key, display_taken) if item_icon else (stock_item or [0])[0]
         template = MT.model_template(cmd.records, cmd.get_string, names[model], kind)
         rides.append(MT.Ride(row[0], name, kind, display, got["id"], got["item"],
                              os.path.splitext(client_model)[0] + ".mdx", tnames, float(dd.get("scale") or 1.0),
                              int(dd.get("alpha") if dd.get("alpha") is not None else 255), packed,
-                             dd.get("model_data") or {}, spell_icon or 0, row[MT.F["item_name"]],
+                             dd.get("model_data") or {}, spell_icon or 0, item_name,
                              int(row[MT.F["quality"]] if row[MT.F["quality"]] is not None else 4), item_display,
                              template, {"model": model, "textures": tex, "texture_ids": tex_ids,
-                                        "icon": icon_fdid, "names": names},
+                                        "icon": icon_fdid, "names": names, "baked": baked},
                              item_icon=item_icon, item_template=stock_item,
                              state=[dict(s) for s in dd.get("state") or [] if s.get("model") in names],
                              gradient=dd.get("gradient"),
                              dissolve=(dict(dd["dissolve"], layers=[dict(layer) for layer in dd["dissolve"]["layers"]])
                                        if dd.get("dissolve") else None),
                              bank=dd.get("bank"),
-                             particle=list(dd["particle"]) if dd.get("particle") and colors else None))
+                             particle=list(dd["particle"]) if dd.get("particle") and colors else None,
+                             way=way))
         if dd.get("particle") and not colors:
             notes.append(f"{name}: its particles' colours are left out - " +
                          (f"{colors_above} holds the client's particle colour table above {patch}" if colors_above
@@ -325,10 +341,46 @@ def build(entries: list[dict], catalog: MT.MountCatalog, source, client_dir: str
     out.sql = MT.mount_sql(out.tables, rides, ids["owned"], catalog.build, made, "retail direct")
     out.owned = ids["owned"] = MT.owned_now(rides, ids["owned"])
     MT.save_ids(data_dir, ids)
-    itemids.remember(itemids.path(data_dir), {"item": {f"mount:{r.mount}": r.item for r in rides}}, "mounts")
+    itemids.remember(itemids.path(data_dir), {"item": {f"mount:{r.mount}" + (f"~{r.way.get('key')}" if r.way else ""): r.item
+                                                       for r in rides}}, "mounts")
     for n in notes:
         say(f"   {n}")
     return out
+
+
+def _baked_skins(way: dict, tex_ids: dict[int, int], tex: dict[int, str], ride: int, source, name: str,
+                 notes: list[str]) -> dict[int, bytes]:
+    """A mount colourway's painted skins (slot -> BLP), each in its armor colour with its paint (paint.py); ``tex``
+    takes their names (beside the skin, ``_p<the ride's id>``). A skin it doesn't paint stays as it is (the client
+    colours it)."""
+    ops, base = PT.ops_of(way), RP.part_colour(way, "armor")
+    out = {}
+    for slot, fdid in sorted(tex_ids.items()):
+        mine = [op for op in ops if int(op["tex"]) == fdid]
+        if not mine:
+            continue
+        data, why = source.try_read(fdid)
+        if not data:
+            notes.append(f"{name}: its skin {fdid} isn't readable ({why}) - not in its colours")
+            continue
+        try:
+            out[slot] = PT.bake_texture(data, mine, base, f"texture {fdid}")
+        except ValueError as exc:
+            notes.append(f"{name}: {exc} - not in its colours")
+            continue
+        tex[slot] = PT.painted_path(tex[slot], ride)
+    return out
+
+
+def creature_colours(rides: list[MT.Ride], paths: dict[int, tuple[str, str]]) -> bytes | None:
+    """``CREATURE_COLOURS`` for the rides that are colourways (None when none is): their colours, their effects'
+    own and their painted skins (where they are in the client: ``Ride.retail["baked_paths"]``)."""
+    import types
+    ways = [types.SimpleNamespace(entry=r.id, display=0, colour=r.way) for r in rides if isinstance(r.way, dict)]
+    if not ways:
+        return None
+    return RP.colour_table(ways, {f: p for f, (_k, p) in paths.items()},
+                           {r.id: dict((r.retail or {}).get("baked_paths") or {}) for r in rides if isinstance(r.way, dict)})
 
 
 # -- retail's own files ---------------------------------------------------------------------------
@@ -363,7 +415,12 @@ def _direct_files(out: Built, r: MT.Ride, source, listfile: str) -> None:
             continue
         out.paths[f] = (kind, there)
         out.files[there] = f
+    baked = r.retail.get("baked") or {}
     for path, slot in MT.texture_names(r.model_path, r.retail["textures"])[1].items():
+        if slot in baked:                                     # a colourway's painted skin: its baked copy
+            out.files[path] = baked[slot]
+            r.retail.setdefault("baked_paths", {})[r.retail["texture_ids"][slot]] = path
+            continue
         fdid = r.retail["texture_ids"][slot]
         out.files[path] = fdid
         out.paths.setdefault(fdid, ("texture", path))
