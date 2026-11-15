@@ -14,6 +14,7 @@ API (GET unless noted):
   /api/set?source=&id=&kind=
   /api/mounts?source=&q=&kind=&page=        retail's mounts; /api/mount?source=&id= one; /api/mount/preview?source=&display=
   /api/basket                    GET the basket; POST replaces it
+  /api/collections               GET your own collections; POST replaces them (collections.js)
   /api/basket/plan               what installing it builds: each entry's looks, overlaps, changes
   /api/basket/leave-out          POST {display, out}: a piece left out of the entries that have it (or put back)
   /api/basket/take-out           POST {key, out}: something in the game taken out by the next install (or kept)
@@ -990,6 +991,33 @@ class Workbench:
                 json.dump(entries, fh, indent=1)
             os.replace(tmp, self.basket_path)
 
+    # -- your own collections (collections.js) -------------------------------------
+    def collections(self) -> dict:
+        """Your own collections: {collections: [{key, name, pieces: [{slot, source, item, display, label, name,
+        icon, quality, inv, colour?}]}], current: the one being built}."""
+        path = os.path.join(self.settings.data_dir, "collections.json")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            doc = {}
+        cols = doc.get("collections") if isinstance(doc.get("collections"), list) else []
+        return {"collections": [c for c in cols if isinstance(c, dict) and c.get("key")], "current": doc.get("current") or ""}
+
+    def save_collections(self, doc: dict) -> dict:
+        if not isinstance(doc, dict) or not isinstance(doc.get("collections"), list):
+            raise ValueError("collections: {collections: [...], current}")
+        for c in doc["collections"]:
+            if not isinstance(c, dict) or not c.get("key") or not isinstance(c.get("pieces", []), list):
+                raise ValueError("a collection is {key, name, pieces: [...]}")
+        path = os.path.join(self.settings.data_dir, "collections.json")
+        with self._basket_lock:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + ".part", "w", encoding="utf-8") as fh:
+                json.dump({"collections": doc["collections"], "current": doc.get("current") or ""}, fh, indent=1)
+            os.replace(path + ".part", path)
+        return self.collections()
+
 
 def _int(v: str | None) -> int | None:
     try:
@@ -1038,6 +1066,9 @@ def make_handler(wb: Workbench):
             try:
                 size = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(size) or b"null")
+                if url.path == "/api/collections":
+                    self._json(wb.save_collections(body or {}))
+                    return
                 if url.path == "/api/basket":
                     wb.save_basket(body)
                     self._json({"ok": True, "count": len(body)})
@@ -1109,6 +1140,8 @@ def make_handler(wb: Workbench):
                 return self._json(wb.status())
             if path == "/api/meta":
                 return self._json(wb.meta())
+            if path == "/api/collections":
+                return self._json(wb.collections())
             if path == "/api/basket":
                 return self._json(wb.basket())
             if path == "/api/settings":

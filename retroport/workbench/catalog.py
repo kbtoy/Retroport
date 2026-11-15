@@ -528,6 +528,44 @@ def look_stamp(look: dict) -> str:
     return f"{key}#{hashlib.sha1(blob.encode()).hexdigest()[:10]}"
 
 
+def _plan_collection(catalogs: dict[str, "Catalog"], e: dict, first: dict, displays: set, items: set,
+                     entries: list[dict]) -> dict:
+    """A collection in the basket (``{kind: "collection", source: "mine", id: its key, name, pieces}``): each
+    piece the version picked of its item (``display``), from its own source, in its own colourway where it has
+    one - each an item of its own, as a colourway of a whole set is."""
+    looks, ids, waiting = [], [], False
+    for p in e.get("pieces") or []:
+        cat = catalogs.get(p.get("source", ""))
+        if cat is None:
+            waiting = True
+            continue
+        got, _ids = cat.looks_for({"kind": "item", "id": p.get("item")})
+        want = int(p.get("display") or 0)
+        look = next((l for l in got if l["display"] == want), None) if want else (got[0] if got else None)
+        if look is None:
+            continue
+        way = p.get("colour") if isinstance(p.get("colour"), dict) else None
+        look = dict(look, slot=look.get("slot") or p.get("inv") or 0, look_key=look_key(look["display"], way),
+                    source=p.get("source"))
+        if p.get("label"):
+            look["label"] = p["label"]
+        if way:
+            look["colour"], look["colour_name"] = way, way.get("name") or "Custom"
+        looks.append(look)
+        ids.append(look["item"])
+    out = {k: e.get(k) for k in ("kind", "source", "id", "name", "icon", "quality", "sub")} | {
+        "key": entry_key(e), "looks": looks, "left_out": [], "items": len(ids),
+        "state": "loading" if waiting else "ready" if looks else "missing"}
+    mine = list(dict.fromkeys(l["look_key"] for l in looks if l["display"]))
+    out["shares"] = [entries[i]["name"] for i in dict.fromkeys(first[d] for d in mine if d in first)]
+    out["covered"] = bool(mine) and all(d in first for d in mine)
+    for d in mine:
+        first.setdefault(d, len(entries))
+    displays.update(mine)
+    items.update((p.get("source"), i) for p, i in zip(e.get("pieces") or [], ids))
+    return out
+
+
 def plan_basket(catalogs: dict[str, Catalog], basket: list[dict], installed: list[dict] | None = None) -> dict:
     """What installing the basket builds: each entry's looks, the entries whose looks all come with
     an earlier one anyway, and - ``installed``: the basket of the install in the client, None when
@@ -540,6 +578,9 @@ def plan_basket(catalogs: dict[str, Catalog], basket: list[dict], installed: lis
                 "key": entry_key(e), "looks": [], "left_out": [], "items": 0, "state": "ready", "shares": [],
                 "covered": False, "mount": {"id": e.get("id"), "display": e.get("display"), "kind": e.get("mount_kind")}})
             mounts.add((e.get("source"), e.get("id")))
+            continue
+        if e.get("kind") == "collection":               # your own set (collections.js): its pieces as picked
+            entries.append(_plan_collection(catalogs, e, first, displays, items, entries))
             continue
         cat = catalogs.get(e.get("source", ""))
         looks, ids = cat.looks_for(e) if cat else ([], [])
