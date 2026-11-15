@@ -975,8 +975,19 @@ function wireKit() {
 // One viewer for the drawer. An item shows its own models alone - or, when it has none (a cloth
 // cloak, armour drawn on the body), itself on a character wearing only it. A set is dressed on a
 // character; a set of one kind (weapons, masks, cloaks) shows one piece at a time, ◀ ▶ under it.
-const PV = {viewer: null, race: "hu", sex: 0, token: 0, races: [], bodies: new Map(), step: null};
-try { const s = JSON.parse(localStorage.getItem("wb-preview") || "{}"); PV.race = s.race || "hu"; PV.sex = s.sex || 0; } catch (e) { /* defaults */ }
+const PV = {viewer: null, race: "hu", sex: 0, token: 0, races: [], bodies: new Map(), step: null, postures: {}};
+try {
+  const s = JSON.parse(localStorage.getItem("wb-preview") || "{}");
+  PV.race = s.race || "hu"; PV.sex = s.sex || 0; PV.postures = s.postures || {};
+} catch (e) { /* defaults */ }
+// A race's posture for a sex (Hunched or Upright orcs, Normal or Upright undead): the one picked, else the
+// race's first - the client's own. "" where the race has one posture.
+function postureOf(race, sex) {
+  const r = PV.races.find(x => x.key === race), list = r && r.postures ? r.postures[String(sex)] : null;
+  if (!list || !list.length) return "";
+  const picked = PV.postures[`${race}:${sex}`];
+  return list.some(p => p.key === picked) ? picked : list[0].key;
+}
 const HELD = [13, 14, 15, 17, 21, 22, 23, 25, 26];
 const BACK = 16, CAPE = 5;                         // the back slot; ModelType 5: a cloak drawn on the body
 function previewViewer() {
@@ -986,20 +997,28 @@ function previewViewer() {
   }
   return PV.viewer;
 }
-// the race and sex choice: the races your 3.3.5 client plays
+// the race, sex and posture choice: the races your client plays (its own and those its wxl-races.cfg adds),
+// and for a race of two postures which one
 function raceSexPicker(onChange) {
   const races = PV.races.length ? PV.races : [{key: "hu", name: "Human"}];
   if (!races.some(r => r.key === PV.race)) PV.race = races[0].key;
   const race = el("select", {"aria-label": "Race"}, races.map(r => el("option", {value: r.key, selected: r.key === PV.race}, r.name)));
   const sex = el("select", {"aria-label": "Sex"}, el("option", {value: 0, selected: PV.sex === 0}, "Male"),
                  el("option", {value: 1, selected: PV.sex === 1}, "Female"));
-  const changed = () => {
-    PV.race = race.value; PV.sex = +sex.value;
-    try { localStorage.setItem("wb-preview", JSON.stringify({race: PV.race, sex: PV.sex})); } catch (e) { /* private window */ }
-    onChange();
+  const posture = el("select", {"aria-label": "Posture", title: "How this race stands"});
+  const fillPosture = () => {
+    const r = races.find(x => x.key === race.value), list = r && r.postures ? r.postures[sex.value] : null;
+    posture.replaceChildren(...(list || []).map(p => el("option", {value: p.key, selected: p.key === postureOf(race.value, +sex.value)}, p.label)));
+    posture.hidden = !list || list.length < 2;
   };
+  const save = () => {
+    try { localStorage.setItem("wb-preview", JSON.stringify({race: PV.race, sex: PV.sex, postures: PV.postures})); } catch (e) { /* private window */ }
+  };
+  const changed = () => { PV.race = race.value; PV.sex = +sex.value; fillPosture(); save(); onChange(); };
   race.addEventListener("change", changed); sex.addEventListener("change", changed);
-  return el("span", {class: "pv-pick"}, race, sex);
+  posture.addEventListener("change", () => { PV.postures[`${PV.race}:${PV.sex}`] = posture.value; save(); onChange(); });
+  fillPosture();
+  return el("span", {class: "pv-pick"}, race, sex, posture);
 }
 const texUrl = source => fdid => `/tex/${source}/${fdid}.png`;
 // A collection model is shared by many items (a whole set's belt, boots, hood...): each shows only the
@@ -1151,8 +1170,8 @@ function carouselSection(pieces, rows) {
 
 // -- the character view -------------------------------------------------------------------------
 async function bodyOf(race, sex) {
-  const key = `${race}:${sex}`;
-  if (!PV.bodies.has(key)) PV.bodies.set(key, api("/api/body", {race, sex}));
+  const posture = postureOf(race, sex), key = `${race}:${sex}:${posture}`;
+  if (!PV.bodies.has(key)) PV.bodies.set(key, api("/api/body", {race, sex, posture}));
   try { return await PV.bodies.get(key); } catch (e) { PV.bodies.delete(key); throw e; }
 }
 function loadImage(url) {
@@ -1198,19 +1217,26 @@ function shows(a, id, hair) {
 async function compositeSkin(body, outfit, source, way = null) {
   const L = body.layout, c = document.createElement("canvas");
   c.width = L.width; c.height = L.height;
-  const draws = body.skin.map(([sec, fdid]) => [sec, `/tex/bfa/${fdid}.png`, false]);
+  // [section, url, a piece's?, blend]: a retail body's layers carry the client's blend (1 pastes, 4 multiplies,
+  // 6 overlays, 7 screens, else by alpha); BfA's CharSections and the pieces' blend by alpha
+  const draws = body.skin.map(([sec, fdid, blend]) => [sec, `/tex/${body.source || "bfa"}/${fdid}.png`, false, blend || 9]);
   for (const slot of outfit.dress_order) for (const pc of outfit.pieces.filter(p => p.slot === slot))
-    for (const t of pc.body) draws.push([t.section, `/tex/${source}/${t.fdid}.png`, true]);
+    for (const t of pc.body) draws.push([t.section, `/tex/${source}/${t.fdid}.png`, true, 9]);
   const imgs = await Promise.all(draws.map(([, u]) => loadImage(u).catch(() => null)));
+  const OPS = {4: "multiply", 6: "overlay", 7: "screen"};
   c.paint = w => {
     const k = window.Colour ? Colour.partColour(w, "armor") : null, ctx = c.getContext("2d");
     ctx.clearRect(0, 0, L.width, L.height);
-    draws.forEach(([sec, , piece], i) => {
+    draws.forEach(([sec, , piece, blend], i) => {
       let img = imgs[i];
       if (!img) return;
       if (piece && k) img = Colour.image(img, k);
-      if (sec < 0) ctx.drawImage(img, 0, 0, L.width, L.height);
-      else { const r = L.sections[sec]; if (r) ctx.drawImage(img, r[0], r[1], r[2], r[3]); }
+      const r = sec < 0 ? [0, 0, L.width, L.height] : L.sections[sec];
+      if (!r) return;
+      if (blend === 1) ctx.clearRect(r[0], r[1], r[2], r[3]);       // a paste: what it covers is its own
+      ctx.globalCompositeOperation = OPS[blend] || "source-over";
+      ctx.drawImage(img, r[0], r[1], r[2], r[3]);
+      ctx.globalCompositeOperation = "source-over";
     });
   };
   c.paint(way);
@@ -1239,11 +1265,13 @@ async function dress(v, pieces, token, from = null, pb = null) {
   if (token !== PV.token) return null;
   const worn = wornGeosets(body, outfit);
   v.clear();
-  const types = {1: skin};
-  if (body.hair) types[6] = `/tex/bfa/${body.hair}.png`;
-  if (body.skin_extra) types[8] = `/tex/bfa/${body.skin_extra}.png`;
+  const bsrc = body.source || "bfa", types = {1: skin};
+  // a retail body's other textures by type (eyes, an Earthen's glow...)
+  for (const [t, f] of Object.entries(body.types || {})) types[+t] = `/tex/${bsrc}/${f}.png`;
+  if (body.hair) types[6] = `/tex/${bsrc}/${body.hair}.png`;
+  if (body.skin_extra) types[8] = `/tex/${bsrc}/${body.skin_extra}.png`;
   if (capeCanvas) types[2] = capeCanvas;
-  const bodyPart = v.add(body.mesh, {texUrl: texUrl("bfa"), types, visible: id => shows(worn, id, true)});
+  const bodyPart = v.add(body.mesh, {texUrl: texUrl(bsrc), types, visible: id => shows(worn, id, true)});
   const parts = [];
   let models = 0;
   for (const slot of outfit.dress_order) for (const pc of outfit.pieces.filter(p => p.slot === slot)) for (const m of pc.models) {

@@ -23,7 +23,7 @@ API (GET unless noted):
   POST /api/pick {folder, title, start}   Windows' folder/file picker on this machine -> {path}
   /api/races                     the races the 3.3.5 client plays (the character view's choices)
   /api/preview?source=&display=&race=&sex=&slot=     a display's models (meshes, Stand) and body textures
-  /api/body?race=&sex=           a BfA body: mesh, skin layers, layout, hair, default geosets
+  /api/body?race=&sex=&posture=  a body (BfA's, a posture's, retail's own): mesh, skin layers, layout, hair, geosets
   /api/outfit?source=&race=&sex=&items=<display>:<slot>,...   what each piece puts on that body
   /icon/<source>/<fdid>.png      an icon from the source's files (cached as PNG); /tex/... a texture
 """
@@ -190,6 +190,8 @@ class Workbench:
         self._meshes: dict[tuple, dict] = {}
         self._glows: dict[str, dict[int, list]] = {}       # source -> its item glows by visual (``glows_of``)
         self._race_names: dict[str, dict[int, str]] = {}
+        self._client_files: CH.ClientFiles | None = None    # the client's own bodies (an upright undead)
+        self._retail_bodies: CH.RetailBodies | None = None  # races only retail has (Earthen)
         self._specs: dict[str, C.SourceSpec] = {}
         self._client_seen = None
         self.bodies: CH.Bodies | None = None
@@ -231,6 +233,7 @@ class Workbench:
             self.bodies = CH.Bodies(readers["bfa"])
         self._specs = specs
         self._races = None
+        self._retail_bodies = None
         self._meshes.clear()
         retail = specs.get("retail")
         self.direct.client, self.direct.listfile = st.client, st.listfile
@@ -618,28 +621,68 @@ class Workbench:
 
     # -- races, bodies, previews ----------------------------------------------------
     def races(self) -> list[dict]:
-        """The races the 3.3.5 client plays, one per prefix, named as BfA names them (else the
-        retail source), with their ids in BfA (the body) and in each item source."""
+        """The races the client plays, one per body (CH.server_races: the client's own and those its
+        wxl-races.cfg adds - Mag'har, Earthen, Goblin, Mechagnome), named as retail names them, with their
+        ids in BfA (the body; 0: retail's own body, CH.RetailBodies), in retail, in each item source, and
+        their postures (CH.POSTURES: the other one only where its model is there)."""
         if self._races is None:
             out = []
             if self.settings.client and os.path.isdir(self.settings.client):
-                names = {}
-                for key in self.sources:
-                    try:
-                        names.update({p: i for p, i in self.displays(key).prefixes.items() if p not in names})
-                    except Exception:
-                        pass
+                rows = self._chr_races()
                 bfa_races = self.bodies.races() if self.bodies else {}
-                for r in CH.client_races(self.settings.client):
-                    p = r["prefix"].lower()
+                for r in CH.server_races(self.settings.client, rows):
+                    p = r["key"]
                     b = bfa_races.get(p)
-                    out.append({"key": p, "name": (b[1].get("Name_lang") if b else "") or r["prefix"], "client": r["ids"],
-                                "bfa": b[0] if b else 0,
+                    postures = {}
+                    for sex in (0, 1):
+                        got = [(name, label) for name, label, model in CH.POSTURES.get((p, sex), [])
+                               if model is None or self._posture_model(model) is not None]
+                        if len(got) > 1:
+                            postures[str(sex)] = [{"key": n, "label": l} for n, l in got]
+                    out.append({"key": p, "name": r["name"], "client": r["client"], "retail": r["retail"],
+                                "bfa": b[0] if b else 0, "postures": postures,
                                 "sources": {k: self.displays(k).prefixes.get(p, 0) for k in self.catalogs}})
             if len(self.catalogs) < len(self.sources):
                 return out                              # sources still loading: their ids come later
             self._races = out
         return self._races
+
+    def _chr_races(self) -> dict[int, dict]:
+        """ChrRaces of the retail source (every body race), else BfA's."""
+        for key in ("retail", "bfa"):
+            try:
+                return dict(self.reader(key).table("ChrRaces"))
+            except Exception:
+                continue
+        return {}
+
+    def client_files(self) -> CH.ClientFiles | None:
+        if not (self.settings.client and os.path.isdir(self.settings.client)):
+            return None
+        if self._client_files is None or self._client_files.client_dir != self.settings.client:
+            self._client_files = CH.ClientFiles(self.settings.client)
+        return self._client_files
+
+    def _posture_model(self, model: tuple):
+        """A posture's mesh source: (its name, read(fdid), its FileDataID), or None where it isn't there."""
+        where, what = model
+        try:
+            if where == "bfa":
+                return (f"bfa:{what}", self.reader("bfa").read, what) if self.bodies else None
+            files = self.client_files()
+            fdid = files.fdid_of(what) if files else 0
+            if not fdid:
+                return None
+            bfa = self.reader("bfa")
+
+            def read(f):                                 # its companions from the client, the rest from BfA
+                try:
+                    return files.read(f)
+                except LookupError:
+                    return bfa.read(f)
+            return (f"client:{what}", read, fdid)
+        except Exception:
+            return None
 
     def race_ids(self, key: str, race: str) -> tuple[int, int]:
         """A race (prefix, or a number for that source) as (its id in the item source, its BfA id)."""
@@ -768,11 +811,19 @@ class Workbench:
                 out["problems"].append(f"state kit model {s.get('model')}: {type(e).__name__}: {e}")
         return out
 
-    def body(self, race: str, sex: int) -> dict:
+    def body(self, race: str, sex: int, posture: str = "") -> dict:
+        """A race's body: BfA's (in a posture of CH.POSTURES, else the first), else retail's own (Earthen)."""
+        r = next((x for x in self.races() if x["key"] == race.lower()), None)
+        if r is not None and not r["bfa"] and r["retail"]:
+            if self._retail_bodies is None:
+                self._retail_bodies = CH.RetailBodies(self.reader("retail"))
+            return self._retail_bodies.body(r["retail"], sex)
         if self.bodies is None:
             raise LookupError("the character view needs BfA's bodies (Settings: BfA from wago.tools or a local install)")
         _item, bfa = self.race_ids("bfa", race)
-        return self.bodies.body(bfa, sex)
+        choice = next((m for n, _l, m in CH.POSTURES.get((race.lower(), sex), []) if n == posture), None)
+        model = self._posture_model(choice) if choice else None
+        return self.bodies.body(bfa, sex, model) | {"posture": posture if model else ""}
 
     def outfit(self, key: str, race: str, sex: int, items: list[tuple[int, int]]) -> dict:
         """What each (display, inventory type) puts on the body: its geoset values, section textures,
@@ -1040,7 +1091,7 @@ def make_handler(wb: Workbench):
             if path == "/api/races":
                 return self._json(wb.races())
             if path == "/api/body":
-                return self._json(wb.body(q.get("race", "hu"), _int(q.get("sex")) or 0))
+                return self._json(wb.body(q.get("race", "hu"), _int(q.get("sex")) or 0, q.get("posture", "")))
             if path == "/api/outfit":
                 items = []
                 for part in (q.get("items") or "").split(","):
