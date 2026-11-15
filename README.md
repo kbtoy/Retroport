@@ -30,7 +30,9 @@ A 32-bit client on the same server takes what the x64 Workbench installs instead
   Gladiator and Elite - and the colours of sets retail lists one per colour, like the 18
   Sweatsuits), and items your client already has are marked.
 - **See it in 3D** before you install it, animated, with its glows and moving textures: an item on its
-  own, a set dressed on a character of any race your client plays (male or female), weapons and
+  own, a set dressed on a character of any race your client plays (male or female) - the stock ten and
+  every race your client's `wxl-races.cfg` adds (Kul Tiran, Pandaren, Mag'har, Earthen, Goblin,
+  Mechagnome...), an orc hunched or upright, an undead as made or upright - weapons and
   other one-kind sets one at a time with ◀ ▶. Every version is a click away under the preview. The
   preview draws each piece by the client's own rules: which sides of a surface show, how its glows
   add up, its particles and ribbon trails, the retail glow models the client hangs on an item, which
@@ -46,11 +48,26 @@ A 32-bit client on the same server takes what the x64 Workbench installs instead
   extra item beside the version it was made from ("Galactic Gladiator's Silk Cord (Fel)"), with a look
   of its own that the client draws in your colours wherever it shows - worn, at character select, on
   other players (`/console wxlItemColours 0` in chat shows them as made).
+- **Paint inside a piece** - the colourway's **Paint** tab: pick a colour and click a part of the piece
+  (a plate, a strap, a trim: everything joined to it), an **Area** (what's of much the same colour around
+  where you click; *Reach* says how far) or drag the **Brush** over it - on the model and on armor drawn on
+  the body. The paint keeps the art's creases and highlights; Undo, Redo and Clear; the pose holds still
+  while you paint (Alt + drag turns the model). Under **Effects** each glow, spark and trail of the piece
+  can take a colour of its own or stay as made. Install bakes the paint into copies of the textures beside
+  them; the client draws the colourway with them and colours the effects live (the x64 and 32-bit clients
+  from 2026-11-14 on).
+- **My collections** - your own set, put together as you browse: open any item (or a set's piece) and
+  *Add to Custom Collection* puts the version you're looking at in its slot (a one-hander to the main
+  hand, then the off hand; a two-hander empties the off hand). *My collections* shows it dressed on the
+  character beside its slots - click a piece to open it (and *Back to* the collection), x takes it out -
+  and a piece opened from there can take colours (and paint) of its own, kept with the piece. *Add to
+  basket* puts the whole collection in as one entry: each piece an item, Stats treating it as a set.
 - **Mounts** - all of retail's mounts (about 1,700), ground and flying, each in 3D with its looks;
   the mounts of one model in other skins are one card, every version a click away under the preview
   like a set's; put them in the basket like items. In game each is a mount spell like the epic ones,
   the creature you ride with retail's sounds and the item that teaches it, with retail's icon (see
-  [Mounts](#mounts)).
+  [Mounts](#mounts)). A mount takes colourways too - its colours, paint on the skins its look gives it,
+  each effect's colour - each a mount of its own in game.
 - **Collect** what you like in the **Basket** - what the next install adds to your game. It shows
   every look each entry brings and the entries that overlap, so a mistake is easy to spot and remove
   (with Undo). Below it: what's **in your game** from earlier installs (every install keeps it; *take
@@ -258,7 +275,9 @@ shared code and older command-line tools ([docs/command-line-tools.md](docs/comm
   **TheDaveCalaz** - code retroport adapts.
 - **Kirazul**'s [Eclipse](https://github.com/Kirazul/Eclipse) - the colourways follow its weapon and gear
   colours: the hue wheel with Brightness and Dye, named presets, and the recolour that keeps each texel's
-  colourfulness so only what was coloured takes the colour (our own code, from its design).
+  colourfulness so only what was coloured takes the colour (our own code, from its design); and the
+  Paint tab follows its Studio (Eclipse-DEV): parts as joined triangles, an area grown by Reach, a brush,
+  paint that keeps the art's light and shade, each effect its own colour (its findings, our own code).
 - The earlier Workbench (`main`) was a front end to **Kirazul**'s
   [wow-retail-backport](https://github.com/Kirazul/wow-retail-backport) and **TheDaveCalaz**'s
   [Equip Plus](https://github.com/TheDaveCalaz/wxl-equip-plus) - thank you to both.
