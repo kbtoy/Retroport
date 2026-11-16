@@ -107,9 +107,9 @@ class MPQ:
         self._fh.seek(off)
         head = self._fh.read(44)
         _m, _hs, _as, fmt, shift, ht_pos, bt_pos, ht_n, bt_n = struct.unpack_from("<4sIIHHIIII", head)
-        ht_hi = bt_hi = 0
+        ht_hi = bt_hi = hi_bt = 0
         if fmt >= 1:
-            _hi_bt, ht_hi, bt_hi = struct.unpack_from("<QHH", head, 32)
+            hi_bt, ht_hi, bt_hi = struct.unpack_from("<QHH", head, 32)
         self.sector = 512 << shift
         self._fh.seek(off + (ht_hi << 32 | ht_pos))
         ht = _decrypt(self._fh.read(ht_n * 16), hash_string("(hash table)", 3))
@@ -117,6 +117,10 @@ class MPQ:
         bt = _decrypt(self._fh.read(bt_n * 16), hash_string("(block table)", 3))
         self._hashes = [struct.unpack_from("<IIHHI", ht, i * 16) for i in range(ht_n)]
         self._blocks = [struct.unpack_from("<IIII", bt, i * 16) for i in range(bt_n)]
+        if hi_bt:                                       # v2: each file's offset past 4 GB (its top 16 bits)
+            self._fh.seek(off + hi_bt)
+            his = struct.unpack(f"<{bt_n}H", self._fh.read(bt_n * 2))
+            self._blocks = [(pos | hi << 32, c, s, f) for (pos, c, s, f), hi in zip(self._blocks, his)]
 
     def close(self) -> None:
         self._fh.close()

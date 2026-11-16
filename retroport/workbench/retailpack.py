@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import os
 import struct
-from collections import defaultdict
+import zlib
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 # the retail tables the x64 client's item graph reads (WXL/modules/db2/items/RetailSchemas.hpp):
@@ -58,7 +60,14 @@ COLLECTIONS = (OBJECT + "collection\\", OBJECT + "collections\\")
 VARIANT = 1_000_000                         # an item's other looks: (modifier + 1) * VARIANT + item
 SPARE = 16_000_000                          # past those: numbered from here (item_template's entry is 24-bit)
 ENTRY_MAX = 16_777_215
-MPQ_LIMIT = 3_900_000_000                   # MPQ v1's offsets are 32-bit
+SECTOR_SHIFT = 3                            # 512 << 3: 4096-byte sectors, as Blizzard's own archives
+SECTOR = 512 << SECTOR_SHIFT
+V1_END = 1 << 32                            # MPQ v1's offsets are 32-bit: a patch past this is written as MPQ v2
+HEADER = 44                                 # room for either header (v1's 32 bytes, v2's 44); the files follow it
+HELD = 256 << 20                            # files waiting on the compressing threads: this much, then wait for them
+# what a kind of file keeps of its size compressed (measured on a real 69-look, 3-mount patch, 2026-11-15:
+# 419 MB -> 194 MB) - for the size Install says before it packs; the kinds not here keep about 0.6
+SQUEEZED = {"model": 0.56, "skin": 0.52, "texture": 0.58, "anim": 0.55, "sound": 0.96, "table": 0.4}
 
 
 # The x64 client's log line for a folder it opened as an archive (SFile2-Core.cpp / NativeStorage.cpp, retail
@@ -616,26 +625,82 @@ def item_sql(pieces: list[Piece], owned: list[tuple[int, int]], build: str, made
 
 
 # -- the patch ------------------------------------------------------------------------------------
-class PatchWriter:
-    """An MPQ v1 patch (files stored), written as it goes so a big one never sits in memory; a name
-    can share another's data (``alias``)."""
+_EXISTS, _COMPRESS = 0x80000000, 0x200
 
-    def __init__(self, path: str):
+
+def squeeze(data: bytes, level: int = 6) -> tuple[bytes, int]:
+    """A file as the patch keeps it, and its block flags: its 4 KB sectors each zlib-compressed where
+    that makes it smaller (Storm's ``0x02`` mask byte first; a sector that doesn't shrink stays as
+    it is, which is how Storm tells them apart), after the table of where each starts - or the file
+    as it is, when compressing saves nothing (sounds, small files)."""
+    n = len(data)
+    if not n:
+        return data, _EXISTS
+    view = memoryview(data)
+    count = (n + SECTOR - 1) // SECTOR
+    at = 4 * (count + 1)
+    offsets, parts = [at], []
+    for k in range(0, n, SECTOR):
+        chunk = view[k:k + SECTOR]
+        z = zlib.compress(chunk, level)
+        part = b"\x02" + z if len(z) + 1 < len(chunk) else bytes(chunk)
+        parts.append(part)
+        at += len(part)
+        offsets.append(at)
+    if at >= n:
+        return data, _EXISTS
+    return struct.pack(f"<{count + 1}I", *offsets) + b"".join(parts), _EXISTS | _COMPRESS
+
+
+class PatchWriter:
+    """An MPQ patch, written as it goes so a big one never sits in memory: each file compressed
+    (``squeeze``, on worker threads - zlib lets go of Python's lock while it works) unless
+    ``compress`` is False; a name can share another's data (``alias``). MPQ v1 - the format of the
+    client's own patches - while it fits in 4 GB; past that, MPQ v2, whose extended block table
+    holds each offset's top bits (the client reads both: Storm's ``m_hiBlockTablePos``)."""
+
+    def __init__(self, path: str, compress: bool = True, workers: int = 0):
         self.path, self.blocks, self.names, self._seen = path, [], {}, {}
-        self.size = 32
+        self.raw = 0                             # the files' own size, before compressing
+        self.v2 = False
+        self._workers = max(1, workers or min(8, os.cpu_count() or 1))
+        self._pool = ThreadPoolExecutor(self._workers, thread_name_prefix="squeeze") if compress else None
+        self._pending: deque = deque()          # (block index, size, the compressing)
+        self._held = 0                           # the waiting files' bytes (``HELD`` at most, give or take one)
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.file = open(path + ".part", "wb")
-        self.file.write(bytes(32))
+        self.file.write(bytes(HEADER))
+
+    @property
+    def size(self) -> int:
+        """What's written so far."""
+        return self.file.tell()
 
     def add(self, name: str, data: bytes) -> None:
-        if self.size + len(data) > MPQ_LIMIT:
-            raise ValueError(f"{os.path.basename(self.path)} would pass 3.9 GB - take some looks out of the basket")
         if name.lower() in self._seen:
             return
-        self.names[name] = self._seen[name.lower()] = len(self.blocks)
-        self.blocks.append((self.file.tell(), len(data), len(data), 0x80000000))
-        self.file.write(data)
-        self.size += len(data)
+        index = len(self.blocks)
+        self.names[name] = self._seen[name.lower()] = index
+        self.blocks.append(None)                 # its place in the archive once written (``_put``)
+        self.raw += len(data)
+        if self._pool is None:
+            self._put(index, len(data), (data, _EXISTS))
+            return
+        self._pending.append((index, len(data), self._pool.submit(squeeze, data)))
+        self._held += len(data)
+        while len(self._pending) > 2 * self._workers or (self._held > HELD and len(self._pending) > 1):
+            self._put(*self._next())
+
+    def _next(self):
+        index, size, job = self._pending.popleft()
+        self._held -= size
+        return index, size, job.result()
+
+    def _put(self, index: int, size: int, made: tuple[bytes, int]) -> None:
+        stored, flags = made
+        at = self.file.tell()
+        self.file.write(stored)
+        self.blocks[index] = (at, len(stored), size, flags)
 
     def alias(self, name: str, of: str) -> bool:
         """``name`` as another name of ``of`` (added before); False when ``of`` isn't in the patch."""
@@ -645,9 +710,20 @@ class PatchWriter:
         self.names[name] = self._seen[name.lower()] = block
         return True
 
+    def _drain(self) -> None:
+        while self._pending:
+            self._put(*self._next())
+
+    def _stop(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=True, cancel_futures=True)
+            self._pool = None
+
     def close(self) -> None:
         from .. import mpq
         self.add("(listfile)", "\r\n".join(self.names).encode("latin-1", "replace"))
+        self._drain()
+        self._stop()
         slots = 16
         while slots < 2 * len(self.names):
             slots *= 2
@@ -655,16 +731,24 @@ class PatchWriter:
         for name, block in self.names.items():
             i = mpq._slot(hashes, name)
             hashes[i] = (mpq.hash_string(name, 1), mpq.hash_string(name, 2), 0, 0, block)
-        ht, bt = mpq._tables(hashes, self.blocks)
+        ht, bt = mpq._tables(hashes, [(at & 0xFFFFFFFF, c, s, f) for at, c, s, f in self.blocks])
         at = self.file.tell()
+        self.v2 = at + len(ht) + len(bt) > V1_END
+        lo = struct.pack("<4sIIHHIIII", b"MPQ\x1a", HEADER if self.v2 else 32, (at + len(ht) + len(bt)) & 0xFFFFFFFF,
+                         1 if self.v2 else 0, SECTOR_SHIFT, at & 0xFFFFFFFF, (at + len(ht)) & 0xFFFFFFFF, slots,
+                         len(self.blocks))
         self.file.write(ht + bt)
-        end = self.file.tell()
+        if self.v2:                              # each block's offset >> 32, then where that table and the two others are
+            hi_at = self.file.tell()
+            self.file.write(struct.pack(f"<{len(self.blocks)}H", *(b[0] >> 32 for b in self.blocks)))
+            lo += struct.pack("<QHH", hi_at, at >> 32, (at + len(ht)) >> 32)
         self.file.seek(0)
-        self.file.write(struct.pack("<4sIIHHIIII", b"MPQ\x1a", 32, end, 0, 3, at, at + len(ht), slots, len(self.blocks)))
+        self.file.write(lo)
         self.file.close()
         os.replace(self.path + ".part", self.path)
 
     def abandon(self) -> None:
+        self._stop()
         self.file.close()
         try:
             os.remove(self.path + ".part")
