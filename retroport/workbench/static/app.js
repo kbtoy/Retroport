@@ -137,8 +137,19 @@ function itemCard(r) {
     addButton(k, () => ({kind: "item", source: S.source, id: r.id, name: r.name, icon: r.icon, quality: r.quality,
                           sub: itemKind(r)})));
 }
+// The races the preview picks from, asked for once (one request however many opens wait for it). The first
+// start after the client or the sources change, the server takes a while working them out: the drawer says so
+// meanwhile instead of staying shut.
 async function ensureRaces() {
-  if (!PV.races.length) { try { PV.races = await api("/api/races"); } catch (e) { /* the default list */ } }
+  if (PV.races.length) return;
+  if (!PV.racesLoading) {
+    PV.racesLoading = api("/api/races").then(r => { if (Array.isArray(r) && r.length) PV.races = r; })
+      .catch(() => { /* the default list */ }).finally(() => { PV.racesLoading = null; });
+  }
+  const waiting = PV.racesLoading;
+  const slow = setTimeout(() => showDrawer([el("div", {class: "muted"},
+    "Getting the races your client plays - the first time after a start, or after the client changes, takes a little while…")]), 400);
+  try { await waiting; } finally { clearTimeout(slow); }
 }
 // back: {id, kind, name} - the set the piece was opened from - or {name, open()}: a collection of yours.
 // look: the version to show first (a collection's piece: the one it holds)

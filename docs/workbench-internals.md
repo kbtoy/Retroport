@@ -308,6 +308,20 @@ client's patch-T models - their skeletons found by name, as they're not in the F
 `ClientFiles`). A race with no BfA body (Earthen) is built from retail's customisation tables
 (`RetailBodies`: ChrModel, the first choice of each option, its texture layers by blend mode).
 
+`Workbench.races` (`/api/races`; every preview's `race_ids` goes through it, and the page opens nothing until
+it has the list) is worked out once at a time under `_races_lock`, after the sources have loaded (it waits up
+to `RACES_WAIT` for them: their builds are part of its key), by `load` at start, and kept in
+`cache\races-1.json` under a fingerprint (`_races_key`: the client folder, its `wxl-races.cfg`, every archive
+in Data and its locale folders - for a folder archive its DBFilesClient and character folders - the sources
+and their builds). Measured 2026-11-15 on the user's x64 client (49 archives, the class port's patch-S
+folder): the first list took 26 s (ClientData opened twice, each decrypting every archive's tables, and the
+upright undead's skeleton parsed just to see it was there); now 15 s on a start with nothing kept, 3 s
+(the sources loading) after. A user's x64 Workbench showed no preview: each item waited on that first list.
+Before a client folder is chosen, or when its tables can't be read, the list is the ten stock races
+(`character.stock_races`) - without it a first-run Workbench had none, and the page's fallback Human failed
+with "no race 'hu'". `mpq.MPQ` keeps each archive's decrypted tables for the process (`_TABLES`, by path, file
+id, size and time: about 15 MB for a whole client), so opening a client's archives again costs nothing.
+
 ## The 32-bit client
 
 A client folder with `WowClient32.exe` (`edition.CLIENT_EXE`: the 32-bit 3.3.5 client built from
