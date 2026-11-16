@@ -311,7 +311,11 @@ client's patch-T models - their skeletons found by name, as they're not in the F
 ## The 32-bit client
 
 A client folder with `WowClient32.exe` (`edition.CLIENT_EXE`: the 32-bit 3.3.5 client built from
-wowdecomp-dx11) is what Install goes into: Settings names it, *close World of Warcraft* waits for it
+wowdecomp-dx11) is what Install goes into - when the program is Ultra WoW: `clients.look` reads the
+program rather than its name (the x64 branch's internals have the details; `clients.WANT` is x86 here,
+so an x64 Ultra WoW is refused with a pointer to Retroport Workbench x64). Checked on the real folders
+2026-11-15: WotLK 32-bit `ultra` x86 (no folder MPQs: its exe lacks `FOLDER_MARK`), the WarcraftXL
+client `blizzard`, the x64 folders refused. Settings names it, *close World of Warcraft* waits for it
 (or a `Wow.exe`), and Undo puts files back into the client the install went into (its record's
 `data`). Its `Data` may be hard links to another client's archives: Install removes an archive before
 copying the new one in (and Undo the same), so the other client keeps its own.
@@ -560,3 +564,9 @@ other: not read>`) and exits. The client's `Logs\*.log` are copied aside first a
 `Direct.check_shadowed` (after each install) lists the patch's files `ClientData(top=patch).shadowed_by` finds
 in an archive above it; the path tables are left out where `retailpack.merges_path_tables` (the exe holds
 FdidCompat.cpp's log line `MERGE_MARK`).
+
+## The server pack
+
+As in the x64 branch (`serverpack.py`, `server_files\ultra-wow-opcodes.patch`, POST `/api/server-pack`):
+the same opcode patch, since the win32 build has the same `WXL_ENABLE_*` options and sends the same
+opcodes; its README names Ultra WoW 32-bit first and Ultra WoW x64 as the other Workbench's.

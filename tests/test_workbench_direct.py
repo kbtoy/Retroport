@@ -16,6 +16,8 @@ from retroport.workbench import jobs as J
 from retroport.workbench import retailpack as RP
 from retroport.workbench import server as SV
 
+from client_fakes import ULTRA, program
+
 
 # -- the client's rules ---------------------------------------------------------------------------
 def test_the_client_looks_for_a_models_texture_in_the_models_own_folder():
@@ -171,7 +173,7 @@ class FakeRetail:
 def _client(tmp_path):
     root = tmp_path / "WotLK x64"
     (root / "Data" / "enUS").mkdir(parents=True)
-    (root / edition.CLIENT_EXE).write_bytes(b"MZ" + RP.MERGE_MARK)   # a client that reads every path table
+    (root / edition.CLIENT_EXE).write_bytes(ULTRA)                   # a client that reads every path table
     (root / "Cache" / "WDB").mkdir(parents=True)
     write_archive(str(root / "Data" / "enUS" / "locale-enUS.MPQ"), {})
     items, displays = DBCFile(8), DBCFile(25)
@@ -422,7 +424,7 @@ def test_a_skin_another_model_shares_goes_in_under_this_ones_name_too(tmp_path, 
 def _folder_client(d):
     exe = os.path.join(d.client, edition.CLIENT_EXE)
     with open(exe, "wb") as fh:                                   # a client that opens folder MPQs
-        fh.write(b"MZ" + RP.MERGE_MARK + b" " + RP.FOLDER_MARK + b"%s in place")
+        fh.write(program(marks=(RP.MERGE_MARK, RP.FOLDER_MARK + b"%s in place")))
     d.folder = True
 
 

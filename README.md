@@ -104,17 +104,24 @@ A 32-bit client on the same server takes what the x64 Workbench installs instead
 ## What you need
 
 - **Windows 10 or 11.** The app's window is Microsoft Edge's app mode (Edge comes with Windows).
-- **The 32-bit 3.3.5 client** (`WowClient32.exe`): Ultra WoW built as a 32-bit program.
+- **The 32-bit 3.3.5 client** (`WowClient32.exe`): Ultra WoW built as a 32-bit program. Blizzard's
+  `Wow.exe` (with or without WarcraftXL) and plain wowdecomp builds read only 3.3.5 data, so retail's
+  own files can't show in them: Settings tells them apart by what the program holds, and Install goes
+  only into Ultra WoW 32-bit.
 - **Your own retail install** (the live game), with the [WoWDBDefs](https://github.com/wowdev/WoWDBDefs)
   definitions folder and the [community listfile](https://github.com/wowdev/wow-listfile): Install
   reads retail's tables and files from there. Browsing works from [wago.tools](https://wago.tools)
   before they're set.
-- **An AzerothCore server** for the SQL Install writes (you apply it).
+- **An AzerothCore server** for the SQL Install writes (you apply it), with the opcode patch the
+  [server pack](#your-server) brings.
 
 ## Settings
 
-- **32-bit client folder** - *Browse...* opens Windows' folder picker, and the field says what it found
-  there and where Install will put its patch.
+- **32-bit client folder** - *Browse...* opens Windows' folder picker, and the field says which client
+  it found there - read from the program itself, not its name - and where Install will put its patch.
+  Ultra WoW 32-bit is what Install goes into. A plain 3.3.5 client (Blizzard's `Wow.exe`, with or
+  without WarcraftXL, or a wowdecomp build) can't show retail's files, so Install stays off and says
+  so; Ultra WoW x64 is Retroport Workbench x64's.
 - **Where the items come from** - *wago.tools* or *your own retail install* (what Install needs; it is
   also faster, and works while wago.tools is down). The bodies the character view dresses come from
   BfA 8.3.7, the same way.
@@ -173,6 +180,28 @@ These items show retail's looks only in Ultra WoW: Blizzard's own client shows t
 model. The client reads the file-id tables of every archive, so other packs' new files - the
 races', the undead's - and this patch's all resolve.
 
+## Your server
+
+**Server pack** (on the Install page, next to *Server*) puts what your server needs in one folder,
+`%USERPROFILE%\.retroport\workbench-32bit\direct\server-pack\`, with a zip of it beside it
+(`Retroport-server-pack.zip`), and opens the folder. It is made again each time, from your last
+Install:
+
+- `sql\` - the SQL, numbered in the order to apply it (items and sets, then mounts).
+- `azerothcore\ultra-wow-opcodes.patch` - Ultra WoW (32-bit and x64 alike) sends opcodes of its own
+  (0x521-0x556) as soon as a player is in the world, and a stock AzerothCore disconnects any client
+  that sends one it doesn't know. The patch gives them entries in the core's opcode table (two files,
+  `Opcodes.h` and `Opcodes.cpp`); nothing changes for other clients. Apply it once with
+  `git apply` in your AzerothCore source folder and build the worldserver again. It is under
+  AzerothCore's licence (GPL 2).
+- `README.txt` - applying both, Warden (Ultra WoW doesn't answer it: `Warden.Enabled = 0`, or
+  `Warden.ClientResponseDelay = 0` to keep it for Blizzard's client), the client patch your players
+  need, and what players on other clients see (the items without a model, no mounts).
+
+Items, sets, mounts and colourways need no server module - only the SQL. Without the opcode patch, a
+player can put `SET wxlCustomOpcodes "0"` in their `WTF\Config.wtf` and play on an unpatched server
+without the wardrobe, spell charges, pings, Paragon and the Mythic+ window.
+
 ## Mounts
 
 The **Mounts** page lists retail's mounts with their source (drop, vendor, achievement...) and shows
@@ -229,6 +258,11 @@ icons went with it: Install again.
   item table's layout; the client reads the one it was built for.
 - **"display ... is a row of your client's ItemDisplayInfo.dbc"** - 3.3.5 or an older tool already
   uses that number, and the client draws its row instead of retail's look.
+- **"it reads only 3.3.5 data"** under the client folder - that folder's program isn't Ultra WoW 32-bit
+  (Blizzard's `Wow.exe`, a wowdecomp build). Install goes only into Ultra WoW 32-bit.
+- **Players are disconnected as soon as they enter the world** - the server lacks the opcode patch:
+  see [Your server](#your-server).
+- **Players are disconnected after 10 minutes** - Warden is on: see [Your server](#your-server).
 - **Items are level 1 with no stats** - give them stats in **Stats** and Install again (the Install
   page says how many pieces still have none).
 - **No 3D preview** - the preview needs WebGL 2; update your graphics driver.

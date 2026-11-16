@@ -38,6 +38,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from . import catalog as C
+from . import clients as CL
 from . import glows as GL
 from . import itemstats as IS
 from . import edition
@@ -175,8 +176,9 @@ class Direct:
 
     def problems(self) -> list[str]:
         out = []
-        if not self.client or not J.is_client(self.client):
-            out.append(f"Install puts items into {edition.CLIENT_NAME}: choose its folder (with {edition.CLIENT_EXE}) in Settings")
+        why = CL.look(self.client).problem             # Ultra WoW, not just a program of its name
+        if why:
+            out.append(why)
         if self.source is None or getattr(getattr(self.source, "spec", None), "kind", "") != "local":
             out.append("Install reads retail from your own install: set Retail items to \"My own install\" in Settings")
         if not self.listfile or not os.path.isfile(self.listfile):
