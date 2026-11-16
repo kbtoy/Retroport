@@ -308,7 +308,19 @@ client's patch-T models - their skeletons found by name, as they're not in the F
 ## The x64 client
 
 A client folder with `WowClient64.exe` (`edition.CLIENT_EXE`: the x64 3.3.5 client built from
-wowdecomp-dx11) is what Install goes into: Settings names it, *close World of Warcraft* waits for it
+wowdecomp-dx11) is what Install goes into - when the program is Ultra WoW: `clients.look` reads the
+program rather than its name, since a plain wowdecomp build is a `WowClient64.exe` that reads only 3.3.5
+data. It takes the edition's exe first, then `WowClient32.exe`, `Wow64.exe`, `Wow32.exe`, `Wow.exe`,
+and reads the machine from the PE header (0x8664 x64, 0x14C 32-bit), the link time (before 2012 =
+Blizzard's 3.3.5a `Wow.exe`, linked 2010-06-25) and two marks: `MERGE_MARK` (Ultra WoW: every
+archive's path tables, since 2026-11-03) and `wxlRetailDb2` (Furioz's native WarcraftXL modules, in
+Ultra WoW and in the wowdecomp-dx11 fork). Kinds: `ultra`, `wxl` (installs, at `patch-T.MPQ`, with a
+note), `plain` and `blizzard` (refused: `Client.problem`, which `Direct.problems` and the Settings
+check show), `unknown` (no PE header), `none`. WarcraftXL's DLLs beside the program (`WarcraftXL.dll`,
+`WotLKExtensions.dll`, Equip Plus) are named. Checked on the real folders 2026-11-15: Retail and Next
+`ultra`, Test (10-26) and Furioz's own build `wxl`, WotLK 32-bit `ultra` x86 (refused here: the 32-bit
+Workbench's), the WarcraftXL client `blizzard`, a wowdecomp-main build `plain`. Tests fake a program
+with `tests/client_fakes.py`. Settings names it, *close World of Warcraft* waits for it
 (or a `Wow.exe`), and Undo puts files back into the client the install went into (its record's
 `data`). Its `Data` may be hard links to another client's archives: Install removes an archive before
 copying the new one in (and Undo the same), so the other client keeps its own.
@@ -557,3 +569,21 @@ other: not read>`) and exits. The client's `Logs\*.log` are copied aside first a
 `Direct.check_shadowed` (after each install) lists the patch's files `ClientData(top=patch).shadowed_by` finds
 in an archive above it; the path tables are left out where `retailpack.merges_path_tables` (the exe holds
 FdidCompat.cpp's log line `MERGE_MARK`).
+
+## The server pack
+
+`serverpack.build` (POST `/api/server-pack {open}`, the Install page's *Server pack*) writes
+`<work>\server-pack\` (made in `server-pack.new`, then swapped in; a folder in use stops it) and
+`<work>\Retroport-server-pack.zip`: `sql\<n>-<name>` (`Direct.sql_files()`, numbered), the opcode
+patch from `server_files\ultra-wow-opcodes.patch` and a CRLF `README.txt` (per edition: its Ultra WoW
+first, the other edition's on a server of its own).
+
+The patch is the user's AzerothCore commit 18d5b54fcf (2026-10-29, `D:\AC\Core`) as a plain diff
+with our own header (git apply and GNU patch skip text before the first `diff --git`): table
+entries for 0x521-0x556, `NUM_MSG_TYPES` 0x521 -> 0x557. Checked 2026-11-15 against a clean copy of
+the two files at its parent (`git apply` and `patch -p1` both fit). The server's later world-builder
+commit (0x557-0x558) is not in it: only the Next client's builder sends those. Both Ultra WoW builds
+send these opcodes (the x64 and win32 builds have the same `WXL_ENABLE_*` options); every send goes
+through `protocol::Send`, which `/console wxlCustomOpcodes 0` (`ProtocolEnabled`) turns off. Both
+builds ignore Warden (`WardenClient` Win64, which the win32 build compiles too) and report the OS
+"Win", so AzerothCore kicks them after `Warden.ClientResponseDelay`.

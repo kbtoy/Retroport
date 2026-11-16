@@ -1,6 +1,6 @@
 [project]
 name = "retroport"
-version = "0.7.0"
+version = "0.7.1"
 description = "Retroport Workbench: browse retail WoW items and sets in 3D and backport them to a 3.3.5a client."
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -33,6 +33,6 @@ include = ["retroport*", "gui*", "wotlkconv*"]
 
 [tool.setuptools.package-data]
 "retroport.glue" = ["ui/*.lua", "ui/*.xml"]
-"retroport.workbench" = ["static/*"]
+"retroport.workbench" = ["static/*", "server_files/*"]
 "wotlkconv" = ["LICENSE", "VENDORED.md"]
 "wotlkconv.db" = ["builtin/*.json"]

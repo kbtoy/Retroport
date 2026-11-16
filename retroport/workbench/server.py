@@ -47,6 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import catalog as C
 from . import character as CH
+from . import clients as CL
 from . import direct as DR
 from . import edition
 from . import glows as GL
@@ -57,6 +58,7 @@ from . import mountpack as MP
 from . import mounts as MT
 from . import pick as P
 from . import retailpack as RP
+from . import serverpack as SP
 from . import wotlk as WK
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -895,7 +897,8 @@ class Workbench:
         return {"client": st.client, "retail": src("retail"), "bfa": src("bfa"), "dbd": st.dbd, "listfile": st.listfile,
                 "direct": {"work": self.direct.work}, "checks": self.checks(), "first_run": not st.client,
                 "data_dir": st.data_dir, "picker": P.available(), "folder_mpq": st.folder_mpq,
-                "folder_ok": RP.reads_folder_archives(st.client) if st.client else None}
+                "folder_ok": RP.reads_folder_archives(st.client) if st.client else None,
+                "client_look": CL.look(st.client).view() if st.client else None}
 
     def checks(self) -> dict:
         """Each setting's folder or file looked at: {name: [ok, what was found]}."""
@@ -905,12 +908,16 @@ class Workbench:
         def put(name, ok, text):
             out[name] = [ok, text]
         c = st.client
-        if c:
+        cl = CL.look(c)
+        if c:                                   # what the folder's program is (clients.py), not just its name
             data = os.path.isdir(os.path.join(c, "Data"))
-            exe = J.is_client(c)
-            put("client", data and exe, (edition.CLIENT_NAME[0].upper() + edition.CLIENT_NAME[1:] +
-                                         (f": {len(self.in_client):,} items" if self.in_client else "")) if data and exe else
-                f"no {edition.CLIENT_EXE} here" if data else "no Data folder here")
+            if not data or cl.kind == "none":
+                put("client", False, f"no {edition.CLIENT_EXE} here" if data else "no Data folder here")
+            elif not cl.ok:
+                put("client", False, cl.problem[0].upper() + cl.problem[1:])
+            else:
+                put("client", cl.kind == "ultra", cl.name[0].upper() + cl.name[1:] +
+                    (f": {len(self.in_client):,} items" if self.in_client else "") + (f" - {cl.note}" if cl.note else ""))
         for sp in st.effective_sources():
             if sp.kind == "local":
                 why = st.source_problem(sp)
@@ -928,9 +935,20 @@ class Workbench:
             put("dbd", ok, "WoWDBDefs definitions" if ok else "no .dbd files here")
         if st.listfile:
             put("listfile", os.path.isfile(st.listfile), "listfile" if os.path.isfile(st.listfile) else "no such file")
-        why = self.direct.problems()
-        put("install", not why, why[0] if why else f"Retail's own items go into {edition.CLIENT_NAME}'s " +
-            self.direct.patch_name + (" (a folder MPQ)" if self.direct.as_folder else ""))
+        why = [w for w in self.direct.problems() if not c or w != cl.problem]      # the client's own: said above
+        if why or cl.ok or not c:
+            put("install", not why, why[0] if why else f"Retail's own items go into {cl.name if cl.ok else edition.CLIENT_NAME}'s " +
+                self.direct.patch_name + (" (a folder MPQ)" if self.direct.as_folder else ""))
+        return out
+
+    def server_pack(self, show: bool = False) -> dict:
+        """The server pack (serverpack.py) made from the last Install's SQL; ``show`` opens its folder."""
+        if self.busy():
+            raise RuntimeError("an install is running - make the server pack when its job is done")
+        d = self.direct
+        out = SP.build(d.work, d.sql_files(), self.settings.client, d.patch_name, d.as_folder, app_info()["version"])
+        if show and os.name == "nt":
+            os.startfile(out["folder"])
         return out
 
     def apply_settings(self, v: dict) -> None:
@@ -1093,6 +1111,8 @@ def make_handler(wb: Workbench):
                     b = body or {}
                     patterns = [tuple(x) for x in b.get("patterns") or []] or None
                     self._json({"path": P.pick(bool(b.get("folder", True)), b.get("title", ""), b.get("start", ""), patterns)})
+                elif url.path == "/api/server-pack":             # the SQL, the opcode patch, the notes
+                    self._json(wb.server_pack(bool((body or {}).get("open"))))
                 elif url.path == "/api/install/run":
                     wb.run((body or {}).get("action", ""))
                     self._json(wb.install_status())

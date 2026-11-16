@@ -779,7 +779,7 @@ function renderSettings() {
   $("#st-data").textContent = v.data_dir;
   $("#st-game").replaceChildren(
     stField("client", ed().client.replace(/^the /, "") + " folder", v.client, {hint: `the folder with ${ed().exe} and Data`}),
-    check ? el("span", {class: "fcheck " + (check[0] ? "ok" : "warn")}, (check[0] ? "✓ " : "! ") + check[1]) : null,
+    ...(check ? [el("span", {class: "fcheck " + (check[0] ? "ok" : "warn")}, (check[0] ? "✓ " : "! ") + check[1])] : []),
     el("span", {class: "fhint muted"}, "Install puts retail's own items into this client and writes their SQL for your " +
        "server; it keeps its install, history and Undo in " + v.direct.work + "."),
     el("label", {class: "check"},
@@ -881,7 +881,10 @@ function renderKit() {
   const toSettings = text => el("a", {href: "#", onclick: ev => { ev.preventDefault(); show("settings"); }}, text);
   $("#k-where").replaceChildren(
     el("div", {}, el("span", {class: "k"}, "Client"), c.client_data || el("span", {class: "warn"}, "not set"), " ", toSettings("change")),
-    el("div", {}, el("span", {class: "k"}, "Server"), el("span", {class: "muted"}, "item SQL for you to apply (its dbc folder is left alone)")));
+    el("div", {}, el("span", {class: "k"}, "Server"), el("span", {class: "muted"}, "item SQL for you to apply (its dbc folder is left alone)"),
+       " ", el("button", {class: "btn ghost small-btn", id: "k-pack", disabled: running,
+                          title: "The SQL, AzerothCore's opcode patch for Ultra WoW, Warden and what each player's client sees",
+                          onclick: serverPack}, "Server pack")));
   const notes = [];
   if (st.retail_build) notes.push(`<span class="ok">✓</span> Retail ${st.retail_build}'s own tables and files, straight from ` +
     `your local install into ${st.patch_name} - nothing converted.`);
@@ -946,6 +949,9 @@ function renderKit() {
       `. Restart the worldserver, then log in with ${ed().client}.`));
     for (const p of st.sql) result.push(el("div", {class: "kit-note sql"}, "Yours to do: apply the item SQL to your world database - ",
       el("code", {}, `SOURCE ${slash(p)};`), " ", el("button", {class: "copy", onclick: () => copy(`SOURCE ${slash(p)};`)}, "copy")));
+    result.push(el("div", {class: "kit-note"}, "First time on this server? Ultra WoW needs AzerothCore's opcode patch and " +
+      "Warden off or relaxed - the ", el("a", {href: "#", onclick: ev => { ev.preventDefault(); serverPack(); }}, "server pack"),
+      " has them, with this SQL and what each player's client sees."));
   }
   $("#k-result").replaceChildren(...result);
 
@@ -961,6 +967,13 @@ function renderKit() {
       el("span", {class: mark[0]}, mark[1]),
       el("span", {}, x.step, " ", el("span", {class: "sw"}, x.words)));
   }));
+}
+// the server pack: made from the last Install's SQL, its folder opened (serverpack.py)
+async function serverPack() {
+  try {
+    const r = await post("/api/server-pack", {open: true});
+    toast(`Server pack: ${r.folder} (and ${r.zip.split(/[\\/]/).pop()} beside it)`);
+  } catch (e) { toast(e.message); }
 }
 async function kitRun(action) {
   try {

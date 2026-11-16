@@ -19,6 +19,8 @@ from retroport.workbench import mountpack as MP
 from retroport.workbench import mounts as MT
 from retroport.workbench import retailpack as RP
 
+from client_fakes import ULTRA
+
 
 # -- the 3.3.5 rules ------------------------------------------------------------------------------
 def test_geoset_data_packs_a_nibble_per_group_and_says_what_it_cannot():
@@ -382,7 +384,7 @@ LISTFILE = {234564: "creature/drakemount/drakemount.m2", 234570: "creature/drake
 def _client(tmp_path, above: dict | None = None):
     root = tmp_path / "client"
     (root / "Data" / "enUS").mkdir(parents=True)
-    (root / edition.CLIENT_EXE).write_bytes(b"MZ" + RP.MERGE_MARK)   # a client that reads every path table
+    (root / edition.CLIENT_EXE).write_bytes(ULTRA)                   # a client that reads every path table
     write_archive(str(root / "Data" / "enUS" / "locale-enUS.MPQ"), {})
     items, terrains = DBCFile(8), DBCFile(1)
     items.add_record([MT.ITEM_BASE] + [0] * 7)

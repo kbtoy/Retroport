@@ -1,0 +1,161 @@
+Ultra WoW's opcodes for AzerothCore (0x521-0x556)
+
+Ultra WoW (x64 and 32-bit) sends opcodes of its own once a player is in the world: spell charges,
+retail item variants, radial pings, skyriding, Mythic+ (challenge modes), loot specialization,
+toasts, quest helpers, weekly rewards, the wardrobe and transmog outfits, the appearance protocol,
+area loot, garrison, Paragon, and 0x556 for loot beams. AzerothCore knows opcodes up to 0x520 and
+closes the connection on any other. This patch names them in Opcodes.h, moves NUM_MSG_TYPES from
+0x521 to 0x557 (every table and bound that uses it grows with it) and gives each a table entry in
+Opcodes.cpp: the client opcodes STATUS_UNHANDLED (queued, then dropped with a debug log line - a
+server module answers the ones it handles), the three appearance hello/prepare/query opcodes
+STATUS_AUTHED with Handle_NULL, every server opcode STATUS_NEVER. Nothing else changes; clients
+that never send them see no difference.
+
+Apply in the AzerothCore source folder (the one with src\ and modules\), then build the worldserver:
+    git apply --check ultra-wow-opcodes.patch      (prints nothing when it fits)
+    git apply ultra-wow-opcodes.patch
+Made 2026-10-29 against AzerothCore (the playerbots fork; the two files as AzerothCore had them
+since 2026-07-27).
+
+It changes AzerothCore's code, so it is under AzerothCore's licence: the GNU General Public License,
+version 2.
+
+diff --git a/src/server/game/Server/Protocol/Opcodes.cpp b/src/server/game/Server/Protocol/Opcodes.cpp
+index c2d99161e6220ac6012e4a63cf293278a22660a5..a93f4bbd6935e9224de91aa6f3c8f729542f891d 100644
+--- a/src/server/game/Server/Protocol/Opcodes.cpp
++++ b/src/server/game/Server/Protocol/Opcodes.cpp
+@@ -1441,6 +1441,64 @@ void OpcodeTable::Initialize()
+     /*0x51E*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_MULTIPLE_MOVES, STATUS_NEVER);
+     /*0x51F*/ DEFINE_HANDLER(TC9_CMSG_PREPARE_FOR_REDIRECT,                                         STATUS_AUTHED,     PROCESS_THREADUNSAFE,   &WorldSession::HandleTC9PrepareForRedirect);
+     /*0x520*/ DEFINE_SERVER_OPCODE_HANDLER(TC9_SMSG_READY_FOR_REDIRECT, STATUS_NEVER);
++    // The x64 client's WarcraftXL feature opcodes: no handler yet, so they are dropped (STATUS_UNHANDLED
++    // logs at debug only) instead of disconnecting the client as an undefined opcode would.
++    /*0x521*/ DEFINE_HANDLER(CMSG_WXL_RADIAL_PING,                                                                 STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x522*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_RADIAL_PING,                                         STATUS_NEVER);
++    /*0x523*/ DEFINE_HANDLER(CMSG_WXL_RETAIL_ITEM_VARIANTS,                                                        STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x524*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_RETAIL_ITEM_VARIANTS,                                STATUS_NEVER);
++    /*0x525*/ DEFINE_HANDLER(CMSG_WXL_SPELL_CHARGES_REQUEST,                                                       STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x526*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_SPELL_CHARGES_UPDATE,                                STATUS_NEVER);
++    /*0x527*/ DEFINE_HANDLER(CMSG_WXL_SKYRIDING,                                                                   STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x528*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_SKYRIDING,                                           STATUS_NEVER);
++    /*0x529*/ DEFINE_HANDLER(CMSG_WXL_MOVE_ADD_IMPULSE_ACK,                                                        STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x52A*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_MOVE_ADD_IMPULSE,                                    STATUS_NEVER);
++    /*0x52B*/ DEFINE_HANDLER(CMSG_WXL_CHALLENGE_MODE_REQUEST_STATE,                                                STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x52C*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_CHALLENGE_MODE_STATE,                                STATUS_NEVER);
++    /*0x52D*/ DEFINE_HANDLER(CMSG_WXL_START_CHALLENGE_MODE,                                                        STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x52E*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_CHALLENGE_MODE_BOSS_INFO,                            STATUS_NEVER);
++    /*0x52F*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_CHALLENGE_MODE_KEYSTONE_INFO,                        STATUS_NEVER);
++    /*0x530*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_CHALLENGE_MODE_COMPLETE,                             STATUS_NEVER);
++    /*0x531*/ DEFINE_HANDLER(CMSG_WXL_CHALLENGE_MODE_REQUEST_HISTORY,                                              STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x532*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_CHALLENGE_MODE_HISTORY,                              STATUS_NEVER);
++    /*0x533*/ DEFINE_HANDLER(CMSG_WXL_SET_LOOT_SPECIALIZATION,                                                     STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x534*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_LOOT_SPECIALIZATION,                                 STATUS_NEVER);
++    /*0x535*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_DISPLAY_TOAST,                                       STATUS_NEVER);
++    /*0x536*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_QUEST_KILL_ENTRIES,                                  STATUS_NEVER);
++    /*0x537*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_QUEST_CORPSE_POSITION,                               STATUS_NEVER);
++    /*0x538*/ DEFINE_HANDLER(CMSG_WXL_RESERVED_538,                                                                STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x539*/ DEFINE_HANDLER(CMSG_WXL_RESERVED_539,                                                                STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x53A*/ DEFINE_HANDLER(CMSG_WXL_WEEKLY_REWARDS_REQUEST_STATE,                                                STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x53B*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_WEEKLY_REWARDS_STATE,                                STATUS_NEVER);
++    /*0x53C*/ DEFINE_HANDLER(CMSG_WXL_TRANSMOG_COLLECTION,                                                         STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x53D*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_TRANSMOG_COLLECTION,                                 STATUS_NEVER);
++    /*0x53E*/ DEFINE_HANDLER(CMSG_WXL_TRANSMOG_APPLY,                                                              STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x53F*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_TRANSMOG_APPLY,                                      STATUS_NEVER);
++    // The appearance client opcodes reach mod-retroport-appearance's CanPacketReceive, which consumes
++    // them; Handle_NULL only runs (and logs) without that module.
++    /*0x540*/ DEFINE_HANDLER(CMSG_WXL_APPEARANCE_HELLO,                                             STATUS_AUTHED,     PROCESS_THREADUNSAFE,   &WorldSession::Handle_NULL                              );
++    /*0x541*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_APPEARANCE_HELLO,                               STATUS_NEVER);
++    /*0x542*/ DEFINE_HANDLER(CMSG_WXL_APPEARANCE_PREPARE,                                           STATUS_AUTHED,     PROCESS_THREADUNSAFE,   &WorldSession::Handle_NULL                              );
++    /*0x543*/ DEFINE_HANDLER(CMSG_WXL_APPEARANCE_QUERY,                                             STATUS_AUTHED,     PROCESS_THREADUNSAFE,   &WorldSession::Handle_NULL                              );
++    /*0x544*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_APPEARANCE_SNAPSHOT,                            STATUS_NEVER);
++    /*0x545*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_APPEARANCE_PREPARED,                            STATUS_NEVER);
++    /*0x546*/ DEFINE_HANDLER(CMSG_WXL_TRANSMOG_EQUIPMENT_REQUEST,                                                  STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x547*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_TRANSMOG_EQUIPMENT_STATE,                            STATUS_NEVER);
++    /*0x548*/ DEFINE_HANDLER(CMSG_WXL_TRANSMOG_APPLY_REQUEST,                                                      STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x549*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_TRANSMOG_APPLY_RESPONSE,                             STATUS_NEVER);
++    /*0x54A*/ DEFINE_HANDLER(CMSG_WXL_TRANSMOG_OUTFIT_REQUEST,                                                     STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x54B*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_TRANSMOG_OUTFIT_RESPONSE,                            STATUS_NEVER);
++    /*0x54C*/ DEFINE_HANDLER(CMSG_WXL_TRANSMOG_CUSTOM_SET_REQUEST,                                                 STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x54D*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_TRANSMOG_CUSTOM_SET_RESPONSE,                        STATUS_NEVER);
++    /*0x54E*/ DEFINE_HANDLER(CMSG_WXL_TRANSMOG_SITUATION_REQUEST,                                                  STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x54F*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_TRANSMOG_SITUATION_RESPONSE,                         STATUS_NEVER);
++    /*0x550*/ DEFINE_HANDLER(CMSG_WXL_AREA_LOOT,                                                                   STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x551*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_AREA_LOOT,                                           STATUS_NEVER);
++    /*0x552*/ DEFINE_HANDLER(CMSG_WXL_GARRISON,                                                                    STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x553*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_GARRISON,                                            STATUS_NEVER);
++    /*0x554*/ DEFINE_HANDLER(CMSG_WXL_PARAGON_REQUEST,                                                             STATUS_UNHANDLED,  PROCESS_INPLACE,        &WorldSession::Handle_NULL                              );
++    /*0x555*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_PARAGON_STATE,                                       STATUS_NEVER);
++    /*0x556*/ DEFINE_SERVER_OPCODE_HANDLER(SMSG_WXL_LOOT_QUALITY,                                        STATUS_NEVER);
+ 
+ #undef DEFINE_HANDLER
+ #undef DEFINE_SERVER_OPCODE_HANDLER
+diff --git a/src/server/game/Server/Protocol/Opcodes.h b/src/server/game/Server/Protocol/Opcodes.h
+index 0b34344c425c477833b28b7e3ab1f2537e40783e..9c9b637b817de08358059220fcf829b82c83bbc3 100644
+--- a/src/server/game/Server/Protocol/Opcodes.h
++++ b/src/server/game/Server/Protocol/Opcodes.h
+@@ -1340,7 +1340,64 @@ enum Opcodes : uint16
+     SMSG_MULTIPLE_MOVES                             = 0x51E, // uncompressed version of SMSG_COMPRESSED_MOVES
+     TC9_CMSG_PREPARE_FOR_REDIRECT                   = 0x51F,
+     TC9_SMSG_READY_FOR_REDIRECT                     = 0x520,
+-    NUM_MSG_TYPES                                   = 0x521
++    // WarcraftXL client features (Furioz's x64 client: radial ping, spell charges, skyriding, challenge
++    // modes, transmog, ...). No handler yet: accepted and dropped, so the client is not disconnected.
++    CMSG_WXL_RADIAL_PING                            = 0x521,
++    SMSG_WXL_RADIAL_PING                            = 0x522,
++    CMSG_WXL_RETAIL_ITEM_VARIANTS                   = 0x523,
++    SMSG_WXL_RETAIL_ITEM_VARIANTS                   = 0x524,
++    CMSG_WXL_SPELL_CHARGES_REQUEST                  = 0x525,
++    SMSG_WXL_SPELL_CHARGES_UPDATE                   = 0x526,
++    CMSG_WXL_SKYRIDING                              = 0x527,
++    SMSG_WXL_SKYRIDING                              = 0x528,
++    CMSG_WXL_MOVE_ADD_IMPULSE_ACK                   = 0x529,
++    SMSG_WXL_MOVE_ADD_IMPULSE                       = 0x52A,
++    CMSG_WXL_CHALLENGE_MODE_REQUEST_STATE           = 0x52B,
++    SMSG_WXL_CHALLENGE_MODE_STATE                   = 0x52C,
++    CMSG_WXL_START_CHALLENGE_MODE                   = 0x52D,
++    SMSG_WXL_CHALLENGE_MODE_BOSS_INFO               = 0x52E,
++    SMSG_WXL_CHALLENGE_MODE_KEYSTONE_INFO           = 0x52F,
++    SMSG_WXL_CHALLENGE_MODE_COMPLETE                = 0x530,
++    CMSG_WXL_CHALLENGE_MODE_REQUEST_HISTORY         = 0x531,
++    SMSG_WXL_CHALLENGE_MODE_HISTORY                 = 0x532,
++    CMSG_WXL_SET_LOOT_SPECIALIZATION                = 0x533,
++    SMSG_WXL_LOOT_SPECIALIZATION                    = 0x534,
++    SMSG_WXL_DISPLAY_TOAST                          = 0x535,
++    SMSG_WXL_QUEST_KILL_ENTRIES                     = 0x536,
++    SMSG_WXL_QUEST_CORPSE_POSITION                  = 0x537,
++    CMSG_WXL_RESERVED_538                           = 0x538,
++    CMSG_WXL_RESERVED_539                           = 0x539,
++    CMSG_WXL_WEEKLY_REWARDS_REQUEST_STATE           = 0x53A,
++    SMSG_WXL_WEEKLY_REWARDS_STATE                   = 0x53B,
++    CMSG_WXL_TRANSMOG_COLLECTION                    = 0x53C,
++    SMSG_WXL_TRANSMOG_COLLECTION                    = 0x53D,
++    CMSG_WXL_TRANSMOG_APPLY                         = 0x53E,
++    SMSG_WXL_TRANSMOG_APPLY                         = 0x53F,
++    // WarcraftXL appearance protocol (Furioz's wxl-modern-m2), handled by mod-retroport-appearance
++    CMSG_WXL_APPEARANCE_HELLO                       = 0x540,
++    SMSG_WXL_APPEARANCE_HELLO                       = 0x541,
++    CMSG_WXL_APPEARANCE_PREPARE                     = 0x542,
++    CMSG_WXL_APPEARANCE_QUERY                       = 0x543,
++    SMSG_WXL_APPEARANCE_SNAPSHOT                    = 0x544,
++    SMSG_WXL_APPEARANCE_PREPARED                    = 0x545,
++    CMSG_WXL_TRANSMOG_EQUIPMENT_REQUEST             = 0x546,
++    SMSG_WXL_TRANSMOG_EQUIPMENT_STATE               = 0x547,
++    CMSG_WXL_TRANSMOG_APPLY_REQUEST                 = 0x548,
++    SMSG_WXL_TRANSMOG_APPLY_RESPONSE                = 0x549,
++    CMSG_WXL_TRANSMOG_OUTFIT_REQUEST                = 0x54A,
++    SMSG_WXL_TRANSMOG_OUTFIT_RESPONSE               = 0x54B,
++    CMSG_WXL_TRANSMOG_CUSTOM_SET_REQUEST            = 0x54C,
++    SMSG_WXL_TRANSMOG_CUSTOM_SET_RESPONSE           = 0x54D,
++    CMSG_WXL_TRANSMOG_SITUATION_REQUEST             = 0x54E,
++    SMSG_WXL_TRANSMOG_SITUATION_RESPONSE            = 0x54F,
++    CMSG_WXL_AREA_LOOT                              = 0x550,
++    SMSG_WXL_AREA_LOOT                              = 0x551,
++    CMSG_WXL_GARRISON                               = 0x552,
++    SMSG_WXL_GARRISON                               = 0x553,
++    CMSG_WXL_PARAGON_REQUEST                        = 0x554,
++    SMSG_WXL_PARAGON_STATE                          = 0x555,
++    SMSG_WXL_LOOT_QUALITY                           = 0x556, // reserved: the x64 server's loot-beam message, keeps the numbering aligned
++    NUM_MSG_TYPES                                   = 0x557
+ };
+ 
+ enum OpcodeMisc : uint16
