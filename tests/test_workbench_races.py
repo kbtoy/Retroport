@@ -2,8 +2,13 @@
 from the Orc, Earthen's two ids one), their postures, and a body built from retail's customization tables."""
 
 import os
+import threading
+import types
 
+from retroport import mpq as MQ
+from retroport.mpq import MPQ, write_archive
 from retroport.workbench import character as CH
+from retroport.workbench import server as S
 
 CFG = """# a comment
 WXL_M2_RACE_22=32,7
@@ -105,3 +110,85 @@ def test_a_retail_body_wears_each_options_first_choice(monkeypatch):
     assert b["skin"] == [[-1, 9001, 1], [9, 9003, 15]]
     assert b["types"] == {"19": 9005} and b["geosets"][17] == 3
     assert b["layout"] == {"width": 1024, "height": 512, "sections": {9: [0, 0, 256, 128]}}
+
+
+# -- the race list the server gives the preview ---------------------------------------------------------------
+STOCK_CHR = {1: {"ClientPrefix": "Hu", "Name_lang": "Human"}, 2: {"ClientPrefix": "Or", "Name_lang": "Orc"},
+             5: {"ClientPrefix": "Sc", "Name_lang": "Undead"}, 9: {"ClientPrefix": "Go", "Name_lang": "Goblin"}}
+
+
+def test_the_stock_races_are_the_ten_every_client_plays():
+    got = CH.stock_races(STOCK_CHR)
+    assert [(r["key"], r["name"], r["client"], r["retail"]) for r in got] == [
+        ("hu", "Human", [1], 1), ("or", "Orc", [2], 2), ("sc", "Undead", [5], 5)]       # Goblin 9 isn't stock
+
+
+def _fake(tmp_path, client="", build="12.1.5.70391", state="ready"):
+    wb = types.SimpleNamespace()
+    wb.settings = types.SimpleNamespace(client=client, data_dir=str(tmp_path))
+    wb.sources = {"retail": object()}
+    wb.state = {"retail": state}
+    wb.catalogs = {"retail": types.SimpleNamespace(build=build)}
+    wb._specs = {"retail": types.SimpleNamespace(kind="local")}
+    wb._races, wb._races_lock, wb.bodies, wb._client_files = None, threading.Lock(), None, None
+    wb.made, wb.said = 0, []
+
+    def chr_races():
+        wb.made += 1
+        return STOCK_CHR
+    wb._chr_races = chr_races
+    wb.displays = lambda key: types.SimpleNamespace(prefixes={"hu": 1, "or": 2, "sc": 5})
+    wb.say = wb.said.append
+    for name in ("races", "_make_races", "_races_key", "_posture_model", "race_ids", "client_files"):
+        setattr(wb, name, types.MethodType(getattr(S.Workbench, name), wb))
+    return wb
+
+
+def test_without_a_client_the_preview_has_the_stock_races(tmp_path):
+    wb = _fake(tmp_path)
+    assert [r["key"] for r in wb.races()] == ["hu", "or", "sc"]
+    assert wb.race_ids("retail", "hu") == (1, 0)                  # "no race 'hu'" before a client was chosen
+
+
+def test_a_client_whose_tables_cant_be_read_gets_the_stock_races_and_says_so(tmp_path):
+    (tmp_path / "client" / "Data").mkdir(parents=True)            # no archives: no ChrRaces.dbc
+    wb = _fake(tmp_path / "data", client=str(tmp_path / "client"))
+    assert [r["key"] for r in wb.races()] == ["hu", "or", "sc"]
+    assert any(line.startswith("the client's races:") for line in wb.said)
+
+
+def test_the_race_list_is_kept_between_starts_while_nothing_it_comes_from_changes(tmp_path):
+    first = _fake(tmp_path)
+    got = first.races()
+    assert first.made == 1 and os.path.isfile(os.path.join(tmp_path, "cache", S.RACES_CACHE))
+    again = _fake(tmp_path)                                        # the next start: from the disk
+    assert again.races() == got and again.made == 0
+    newer = _fake(tmp_path, build="12.1.7.71000")                  # a source updated: worked out again
+    assert newer.races() == got and newer.made == 1
+
+
+def test_a_race_list_made_while_sources_load_is_not_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "RACES_WAIT", 0.3)                    # it waits that long for them, then answers
+    wb = _fake(tmp_path, state="loading")
+    assert wb.races()
+    assert wb._races is None and not os.path.exists(os.path.join(tmp_path, "cache", S.RACES_CACHE))
+
+
+def test_an_archive_is_decrypted_once_and_again_when_it_changes(tmp_path, monkeypatch):
+    path = str(tmp_path / "patch-Z.MPQ")
+    write_archive(path, {"a.txt": b"one"})
+    calls = []
+    real = MQ._decrypt
+    monkeypatch.setattr(MQ, "_decrypt", lambda data, key: calls.append(len(data)) or real(data, key))
+    for _ in range(3):
+        m = MPQ(path)
+        assert m.read("a.txt") == b"one"
+        m.close()
+    assert len(calls) == 2                                         # its hash and block tables, the first time only
+    write_archive(path, {"a.txt": b"two", "b.txt": b"more"})       # replaced: read again
+    m = MPQ(path)
+    try:
+        assert m.read("a.txt") == b"two" and m.read("b.txt") == b"more"
+    finally:
+        m.close()
+    assert len(calls) == 4

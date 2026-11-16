@@ -32,6 +32,7 @@ API (GET unless noted):
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
 import mimetypes
@@ -64,6 +65,8 @@ from . import wotlk as WK
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".retroport", edition.SETTINGS_FILE)
 PORT = edition.PORT
+RACES_CACHE = "races-1.json"                # the race list kept between starts (Workbench.races); a new name when its form changes
+RACES_WAIT = 90.0                           # seconds the race list waits for the sources to load (their builds are its key)
 
 
 def code_stamp() -> float:
@@ -190,6 +193,7 @@ class Workbench:
         self.in_client: set[int] = set()
         self._displays: dict[str, M.DisplayIndex] = {}
         self._races: list[dict] | None = None
+        self._races_lock = threading.Lock()
         self._meshes: dict[tuple, dict] = {}
         self._glows: dict[str, dict[int, list]] = {}       # source -> its item glows by visual (``glows_of``)
         self._race_names: dict[str, dict[int, str]] = {}
@@ -296,6 +300,10 @@ class Workbench:
                     self.displays(key)
                 except Exception as e:
                     self.say(f"{self.sources[key].spec.label} previews: {e}")
+            try:                                          # the preview's race list (it waits for it)
+                self.races()
+            except Exception as e:
+                self.say(f"races: {type(e).__name__}: {e}")
             for key in list(self.catalogs):              # the source's mounts (the Mounts page)
                 if key in self.mount_catalogs or key not in self.sources:
                     continue
@@ -627,28 +635,96 @@ class Workbench:
         """The races the client plays, one per body (CH.server_races: the client's own and those its
         wxl-races.cfg adds - Mag'har, Earthen, Goblin, Mechagnome), named as retail names them, with their
         ids in BfA (the body; 0: retail's own body, CH.RetailBodies), in retail, in each item source, and
-        their postures (CH.POSTURES: the other one only where its model is there)."""
-        if self._races is None:
-            out = []
-            if self.settings.client and os.path.isdir(self.settings.client):
-                rows = self._chr_races()
-                bfa_races = self.bodies.races() if self.bodies else {}
-                for r in CH.server_races(self.settings.client, rows):
-                    p = r["key"]
-                    b = bfa_races.get(p)
-                    postures = {}
-                    for sex in (0, 1):
-                        got = [(name, label) for name, label, model in CH.POSTURES.get((p, sex), [])
-                               if model is None or self._posture_model(model) is not None]
-                        if len(got) > 1:
-                            postures[str(sex)] = [{"key": n, "label": l} for n, l in got]
-                    out.append({"key": p, "name": r["name"], "client": r["client"], "retail": r["retail"],
-                                "bfa": b[0] if b else 0, "postures": postures,
-                                "sources": {k: self.displays(k).prefixes.get(p, 0) for k in self.catalogs}})
-            if len(self.catalogs) < len(self.sources):
+        their postures (CH.POSTURES: the other one only where its model is there). Before a client folder is
+        chosen (or when its tables can't be read): the ten stock races (CH.stock_races).
+
+        Worked out once at a time (``_races_lock``: a page's requests wait for the one under way), when the
+        sources are loaded (``load`` does it then), and kept on disk (``RACES_CACHE``) while the client's
+        archives, its wxl-races.cfg and the sources' builds are the same - the first time takes half a minute
+        on a client of fifty archives, and the preview waits for it."""
+        if self._races is not None:
+            return self._races
+        with self._races_lock:
+            if self._races is not None:
+                return self._races
+            settled = lambda: all(self.state.get(k) in ("ready", "failed") for k in self.sources)
+            until = time.monotonic() + RACES_WAIT
+            while not settled() and time.monotonic() < until:     # the sources' builds make the list's key
+                time.sleep(0.2)
+            settled = settled()
+            path = os.path.join(self.settings.data_dir, "cache", RACES_CACHE)
+            key = self._races_key() if settled else ""
+            got = J.load_json(path, None) if key else None
+            if isinstance(got, dict) and got.get("key") == key and isinstance(got.get("races"), list) and got["races"]:
+                self._races = got["races"]
+                return self._races
+            out = self._make_races()
+            if not settled:
                 return out                              # sources still loading: their ids come later
             self._races = out
-        return self._races
+            if out:
+                try:
+                    J.save_json(path, {"key": key, "races": out})
+                except OSError:
+                    pass
+            return out
+
+    def _make_races(self) -> list[dict]:
+        rows = self._chr_races()
+        listed: list[dict] = []
+        client = self.settings.client
+        if client and os.path.isdir(client):
+            try:
+                listed = CH.server_races(client, rows)
+            except Exception as e:                      # its tables unreadable: the stock races, said
+                self.say(f"the client's races: {type(e).__name__}: {e}")
+        if not listed:
+            listed = CH.stock_races(rows)
+        bfa_races = self.bodies.races() if self.bodies else {}
+        out = []
+        for r in listed:
+            p = r["key"]
+            b = bfa_races.get(p)
+            postures = {}
+            for sex in (0, 1):
+                got = [(name, label) for name, label, model in CH.POSTURES.get((p, sex), [])
+                       if model is None or self._posture_model(model, check=True) is not None]
+                if len(got) > 1:
+                    postures[str(sex)] = [{"key": n, "label": l} for n, l in got]
+            out.append({"key": p, "name": r["name"], "client": r["client"], "retail": r["retail"],
+                        "bfa": b[0] if b else 0, "postures": postures,
+                        "sources": {k: self.displays(k).prefixes.get(p, 0) for k in self.catalogs}})
+        return out
+
+    def _races_key(self) -> str:
+        """What the race list is made of, as a fingerprint: the client folder, its wxl-races.cfg, its archives
+        (Data and its locale folders; in a folder archive, its DBFilesClient and character folders), the
+        sources and their builds."""
+        def stamp(p):
+            try:
+                st = os.stat(p)
+                return [st.st_size, st.st_mtime_ns]
+            except OSError:
+                return None
+        parts: list = [RACES_CACHE, edition.KEY, os.path.normcase(self.settings.client or "")]
+        client = self.settings.client
+        if client and os.path.isdir(client):
+            parts.append(stamp(os.path.join(client, CH.RACES_CFG)))
+            data = os.path.join(client, "Data")
+            try:
+                roots = [data] + [os.path.join(data, d) for d in sorted(os.listdir(data))
+                                  if len(d) == 4 and os.path.isdir(os.path.join(data, d))]
+                for root in roots:
+                    for n in sorted(os.listdir(root)):
+                        p = os.path.join(root, n)
+                        parts.append([os.path.relpath(p, data), stamp(p)])
+                        if os.path.isdir(p) and n.lower().endswith(".mpq"):
+                            parts += [[n, sub, stamp(os.path.join(p, sub))] for sub in ("DBFilesClient", "character")]
+            except OSError:
+                pass
+        for k in sorted(self.catalogs):
+            parts.append([k, self.catalogs[k].build, self._specs[k].kind if k in self._specs else ""])
+        return hashlib.sha1(json.dumps(parts, default=str).encode()).hexdigest()
 
     def _chr_races(self) -> dict[int, dict]:
         """ChrRaces of the retail source (every body race), else BfA's."""
@@ -666,14 +742,15 @@ class Workbench:
             self._client_files = CH.ClientFiles(self.settings.client)
         return self._client_files
 
-    def _posture_model(self, model: tuple):
-        """A posture's mesh source: (its name, read(fdid), its FileDataID), or None where it isn't there."""
+    def _posture_model(self, model: tuple, check: bool = False):
+        """A posture's mesh source: (its name, read(fdid), its FileDataID), or None where it isn't there.
+        ``check``: only whether it's there (a client body's companions aren't named: that reads its skeleton)."""
         where, what = model
         try:
             if where == "bfa":
                 return (f"bfa:{what}", self.reader("bfa").read, what) if self.bodies else None
             files = self.client_files()
-            fdid = files.fdid_of(what) if files else 0
+            fdid = files.fdid_of(what, companions=not check) if files else 0
             if not fdid:
                 return None
             bfa = self.reader("bfa")

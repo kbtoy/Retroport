@@ -84,6 +84,14 @@ _EXISTS, _ENCRYPTED, _FIX_KEY, _SINGLE_UNIT, _SECTOR_CRC = 0x80000000, 0x10000, 
 _COMPRESSED = 0x200 | 0x100
 
 
+# Each archive's hash and block tables, decrypted, kept for the process by the file they came from (its path,
+# file id, size, time and header offset): opening an archive again - a client's ~50, for each table read, race
+# list, install - costs no decrypting (several seconds for a client's). Kept as bytes (about 15 MB for a whole
+# client) and read entry by entry; a path's older entry goes when its file changes.
+_TABLES: dict[tuple, tuple[bytes, bytes, bytes]] = {}
+_TABLE_KEYS: dict[str, tuple] = {}
+
+
 class MPQ:
     """One archive. ``read(name)`` returns the file's bytes or None."""
 
@@ -111,32 +119,56 @@ class MPQ:
         if fmt >= 1:
             hi_bt, ht_hi, bt_hi = struct.unpack_from("<QHH", head, 32)
         self.sector = 512 << shift
-        self._fh.seek(off + (ht_hi << 32 | ht_pos))
-        ht = _decrypt(self._fh.read(ht_n * 16), hash_string("(hash table)", 3))
-        self._fh.seek(off + (bt_hi << 32 | bt_pos))
-        bt = _decrypt(self._fh.read(bt_n * 16), hash_string("(block table)", 3))
-        self._hashes = [struct.unpack_from("<IIHHI", ht, i * 16) for i in range(ht_n)]
-        self._blocks = [struct.unpack_from("<IIII", bt, i * 16) for i in range(bt_n)]
-        if hi_bt:                                       # v2: each file's offset past 4 GB (its top 16 bits)
-            self._fh.seek(off + hi_bt)
-            his = struct.unpack(f"<{bt_n}H", self._fh.read(bt_n * 2))
-            self._blocks = [(pos | hi << 32, c, s, f) for (pos, c, s, f), hi in zip(self._blocks, his)]
+        st = os.fstat(self._fh.fileno())
+        where = os.path.normcase(os.path.abspath(path))
+        key = (where, st.st_ino, st.st_size, st.st_mtime_ns, off)
+        got = _TABLES.get(key)
+        if got is None:
+            self._fh.seek(off + (ht_hi << 32 | ht_pos))
+            ht = _decrypt(self._fh.read(ht_n * 16), hash_string("(hash table)", 3))
+            self._fh.seek(off + (bt_hi << 32 | bt_pos))
+            bt = _decrypt(self._fh.read(bt_n * 16), hash_string("(block table)", 3))
+            his = b""
+            if hi_bt:                                   # v2: each file's offset past 4 GB (its top 16 bits)
+                self._fh.seek(off + hi_bt)
+                his = self._fh.read(bt_n * 2)
+            got = (ht, bt, his)
+            old = _TABLE_KEYS.get(where)
+            if old is not None and old != key:
+                _TABLES.pop(old, None)
+            _TABLES[key], _TABLE_KEYS[where] = got, key
+        self._ht, self._bt, self._hi = got
+        self._ht_n, self._bt_n = len(self._ht) // 16, len(self._bt) // 16
+        if len(self._hi) < 2 * self._bt_n:
+            self._hi = b""
 
     def close(self) -> None:
         self._fh.close()
 
+    def _block_at(self, k: int) -> tuple[int, int, int, int]:
+        """Block ``k``: (offset in the archive, stored size, size, flags)."""
+        pos, csize, size, flags = struct.unpack_from("<IIII", self._bt, k * 16)
+        if self._hi:
+            pos |= struct.unpack_from("<H", self._hi, k * 2)[0] << 32
+        return pos, csize, size, flags
+
+    @property
+    def _blocks(self) -> list[tuple[int, int, int, int]]:
+        """Every block (``_block_at``)."""
+        return [self._block_at(k) for k in range(self._bt_n)]
+
     def _block(self, name: str):
-        n = len(self._hashes)
+        n = self._ht_n
         if not n:
             return None
         i = hash_string(name, 0) % n
         a, b = hash_string(name, 1), hash_string(name, 2)
         for _ in range(n):
-            ha, hb, _loc, _plat, blk = self._hashes[i]
+            ha, hb, _loc, _plat, blk = struct.unpack_from("<IIHHI", self._ht, i * 16)
             if blk == 0xFFFFFFFF:
                 return None
-            if ha == a and hb == b and blk < len(self._blocks):
-                block = self._blocks[blk]
+            if ha == a and hb == b and blk < self._bt_n:
+                block = self._block_at(blk)
                 return block if block[3] & _EXISTS else None
             i = (i + 1) % n
         return None

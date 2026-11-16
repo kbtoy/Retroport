@@ -93,6 +93,21 @@ def server_races(client_dir: str, chr_races: dict[int, dict]) -> list[dict]:
     return list(out.values())
 
 
+def stock_races(chr_races: dict[int, dict]) -> list[dict]:
+    """The ten races every 3.3.5 client plays, from a source's ChrRaces: the race list before a client folder is
+    chosen (or when its tables can't be read), in ``server_races``' form."""
+    out = []
+    for i in sorted(STOCK):
+        row = chr_races.get(i)
+        if not row:
+            continue
+        prefix = str(row.get("ClientPrefix") or "")
+        if prefix:
+            out.append({"key": prefix.lower(), "prefix": prefix, "client": [i], "retail": i,
+                        "name": row.get("Name_lang") or row.get("ClientFileString") or prefix})
+    return out
+
+
 # A body's other posture: (race key, sex) -> its choices, the first the client's own. A model: where the
 # body is - ("bfa", FileDataID), or ("client", its path in the client: our own upright undead, patch-T).
 POSTURES = {
@@ -114,6 +129,7 @@ class ClientFiles:
         self._cd = None
         self._paths: dict[int, str] | None = None
         self._extra: dict[int, str] = {}
+        self._named: set[str] = set()                # models whose companions are named (read once)
         self._lock = threading.RLock()
 
     def _open(self):
@@ -141,18 +157,19 @@ class ClientFiles:
         with self._lock:
             return self._open().exists(path)
 
-    def fdid_of(self, path: str) -> int:
-        """A path's FileDataID in the client's tables (0: none), its model's companions named."""
+    def fdid_of(self, path: str, companions: bool = True) -> int:
+        """A path's FileDataID in the client's tables (0: none), its model's companions named (``companions``:
+        reading its skeleton, seconds for a body - not wanted just to know it's there)."""
         with self._lock:
             self._open()
             want = path.replace("/", "\\").lower()
             fdid = next((f for f, p in self._paths.items() if p.lower() == want), 0)
-            if fdid:
+            if fdid and companions:
                 self._name_companions(fdid, want)
             return fdid
 
     def _name_companions(self, fdid: int, path: str) -> None:
-        if not path.endswith(".m2"):
+        if not path.endswith(".m2") or path in self._named:
             return
         from wotlkconv.m2.model import parse_m2
         from wotlkconv.m2.skel import parse_skel
@@ -166,6 +183,7 @@ class ClientFiles:
             refs += parse_skel(self._cd.read(stem + ".skel"), stem + ".skel").anim_file_ids or []
         for a in refs:
             self._extra.setdefault(a.file_id, f"{stem}{a.anim_id:04d}-{a.sub_anim_id:02d}.anim")
+        self._named.add(path)
 
     def read(self, fdid: int) -> bytes:
         with self._lock:
