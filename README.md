@@ -147,6 +147,11 @@ side and never change each other's basket or installs.
    looks for a file somewhere else than retail keeps it (a helm's texture kept with its set's other
    pieces), the patch has it there too; a check then looks up every file the client will open, as
    the client does. The basket's mounts go in the same patch (see [Mounts](#mounts)).
+   The files are compressed the way Blizzard's own archives are (about half their size), and a patch
+   past 4 GB is written in the newer MPQ format, which the client also reads - so how much a basket
+   holds is up to your disks. Before it packs, Install says about how big the patch will be and
+   stops if a disk can't take it: the build and the backups go in
+   `%USERPROFILE%\.retroport\workbench-32bit\direct\`, the patch in the client's `Data` folder.
    **Retail item glows** come too: a look whose retail display has an ItemVisual (a weapon's
    flames, a shoulder's sparkles) gets retail's glow tables and every glow model its visual
    attaches, with their skins and textures. The client hangs them on the item's model the way 3.3.5
@@ -161,7 +166,8 @@ side and never change each other's basket or installs.
    keeps its retail item id; its other looks get (version + 1) x 1,000,000 + the id - the Mythic
    skull of the Damned Necrolyte is 4271546. The SQL only replaces rows Install made itself: an id
    your database already uses for something else stops it with "Duplicate entry".
-4. It installs the patch (the one it replaces is backed up) and clears the client's cache. The
+4. It installs the patch (the one it replaces is backed up) and clears the client's cache. It keeps
+   the backups of its last three installs and takes older ones out. The
    server's dbc folder is left alone. It never replaces another tool's patch, moves an earlier
    install of its own at `patch-T.MPQ` to `patch-Q.MPQ`, and then names any file of the patch that an
    archive above it hides (a whole table another tool put higher up).
@@ -173,7 +179,8 @@ side and never change each other's basket or installs.
 
 When it worked, the basket empties - what it held is in your game now - and the install goes into
 the History (a failed one too, with the step it stopped at). **Undo last install** puts back the patch
-that install replaced and removes what it added. **Build only** (under *Install's steps*) stops before
+that install replaced and removes what it added; again, and it undoes the one before - up to the last
+three installs, whose backups Install keeps. **Build only** (under *Install's steps*) stops before
 the install, so you can look at the patch and the SQL first.
 
 These items show retail's looks only in Ultra WoW: Blizzard's own client shows them without a
@@ -251,6 +258,9 @@ icons went with it: Install again.
   kept for next time.
 - **wago.tools is down** - Settings > *Where the items come from* > *My own install*.
 - **Install stopped** - open the log under the Install button; nothing was installed by that run.
+- **"not enough disk space"** - the log says how much the patch needs on which disk: the build and the
+  backup of the patch it replaces (in `%USERPROFILE%\.retroport\workbench-32bit\direct\`) and the client's copy.
+  Free some space there, or take some looks out of the basket.
   Close World of Warcraft before installing: it holds the files Install replaces.
 - **Which copy of the app is running?** - the version is next to the name at the top (hover it for
   the folder it runs from). Starting another copy while one runs asks to replace it.

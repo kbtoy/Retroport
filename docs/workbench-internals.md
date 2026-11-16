@@ -370,7 +370,7 @@ Install (`Direct.go`):
    the client's (3.3.5's own spell models and textures), moves under `retroport\` after its
    first folder (`glows.relocate`). The client finds it by FileDataID, and a model's skins get a
    copy under its new name.
-3. **pack** - `out\patch-Q.MPQ` (`retailpack.patch_for`: patch-T for a client without the path-table merge) (stored, written as it goes; an alias shares its file's block): a
+3. **pack** - `out\patch-Q.MPQ` (`retailpack.patch_for`: patch-T for a client without the path-table merge) (written as it goes; an alias shares its file's block; see *The patch's size* below): a
    manifest (`retroport\direct.json` - Install replaces only a patch that has one), the tables,
    the path tables (the client's, read with Install's own patches set aside, plus the new rows), the files, the
    aliases. Then `check`: every path `retailpack.lookups` says the client opens, and each glow
@@ -383,7 +383,11 @@ Install (`Direct.go`):
    reads) - the label of a non-default look ("Mythic") as its description - then
    `itemstats.updates` for each piece (no item sets: those need ItemSet.dbc rows).
 5. **install** - `Data\patch-Q.MPQ` (an earlier own patch-T moved into the backup) replaced (removed first: hard links), the old one in
-   `direct\backups\<time>\client\`, the record in `install.json`, Cache cleared.
+   `direct\backups\<time>\client\`, the record in `install.json`, Cache cleared. Then
+   `Direct.prune_backups`: the last `KEEP_BACKUPS` (3) backups with a record (`install.json` or
+   `.undone`) stay, older ones go - each record renamed `.pruned` first, so a folder only part deleted
+   is never an Undo; a backup folder without a record (an install that stopped part-way, maybe the
+   only copy of what it took out) stays.
 
 `out\build.json` records what was built (looks, build, client, steps, entries, a summary - with
 `glows`, `glow_models` and `glows_drawn`); the page calls it built while those match the basket.
@@ -570,3 +574,27 @@ FdidCompat.cpp's log line `MERGE_MARK`).
 As in the x64 branch (`serverpack.py`, `server_files\ultra-wow-opcodes.patch`, POST `/api/server-pack`):
 the same opcode patch, since the win32 build has the same `WXL_ENABLE_*` options and sends the same
 opcodes; its README names Ultra WoW 32-bit first and Ultra WoW x64 as the other Workbench's.
+
+## The patch's size
+
+A user's large basket stopped Install at 3.9 GB (2026-11-15): the patch was MPQ v1 with every file
+stored. `retailpack.PatchWriter` now compresses each file by 4 KB sectors (`squeeze`: a sector table,
+then each sector as Storm's `0x02` mask byte + zlib where that is smaller, else as it is; a file that
+saves nothing stays stored), on up to 8 worker threads (zlib lets go of the GIL; `HELD` bounds the
+waiting bytes). Measured on the user's 69-look, 3-mount patch: 419 MB -> 194 MB (models 55%, skins 51%,
+textures 57%, the .dbc/.db2 tables 10-41%, sounds 95%). A folder MPQ's build (`Direct.compress` False)
+stays stored: Install only reads it back to copy the files out.
+
+Past 4 GB (`V1_END`) the header is MPQ v2 (format 1, 44 bytes; the files always start at 44, so
+either header fits) with the extended block table after the block table: each block's offset >> 32.
+The client reads it (wowdecomp `SFileArchives.cpp`: format 1 needs header size 44; `m_hiBlockTablePos`
+OR'd into each block's offset; the archive's end is the furthest table, capped at the file size; reads
+go through `Blizzard::File::Read` with 64-bit offsets, in the win32 build too - only the
+`IOFileUnit::ReadNative` retry after a failed read is 32-bit). Blizzard's own 3.3.5 archives are
+format 1 with no extended table (none passes 4 GB) and patch-R is a 3.7 GB format 0, so no archive past
+4 GB had been read by the client as of 2026-11-15. `mpq.MPQ` reads the extended table too.
+
+Before `pack`, `Direct.estimate` (each file's own size, times `retailpack.SQUEEZED` for its kind) is
+said in the log, and `Direct.room` adds up per disk what Install will write - the build and the backup
+of the patch it replaces in the work folder, the client's copy - a tenth and 64 MB over, and stops
+with "not enough disk space" before anything is written.

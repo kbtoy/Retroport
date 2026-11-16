@@ -24,7 +24,9 @@ so Install hands it those as they are:
 Nothing is converted. A stock 3.3.5 client shows these items without a model. The server's dbc
 folder is left alone: AzerothCore keeps an item its Item.dbc doesn't have, and the client takes the
 item's display from the server. Install backs up the patch it replaces
-(``<data>\\direct\\backups\\<time>\\install.json``) and clears the client's Cache; Undo puts it back.
+(``<data>\\direct\\backups\\<time>\\install.json``; the last ``KEEP_BACKUPS`` installs' backups stay)
+and clears the client's Cache; Undo puts it back. The patch's files are compressed (``retailpack.squeeze``),
+it is MPQ v2 past 4 GB, and Install says its size and checks the disks' room before it packs.
 It never runs SQL.
 """
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -61,6 +64,35 @@ DB2_NAMES = {"ItemDisplayInfo": "itemdisplayinfo", "ModelFileData": "modelfileda
              "ItemDisplayInfoMaterialRes": "itemdisplayinfomaterialres",
              "ItemDisplayInfoModelMatRes": "itemdisplayinfomodelmatres", "Item": "item",
              "ItemModifiedAppearance": "itemmodifiedappearance", "ItemAppearance": "itemappearance"}
+
+
+KEEP_BACKUPS = 3                            # installs whose backups stay (Undo goes back through them)
+STAMP = re.compile(r"^\d{8}-\d{6}(-\d+)?$")  # a backup folder's name: the install's time
+SLACK = 1.1, 64 << 20                       # room asked for over the estimate: a tenth more, and 64 MB
+
+
+def _size(n: float) -> str:
+    return f"{n / 1073741824:.2f} GB" if n >= 1073741824 else f"{n / 1048576:.1f} MB"
+
+
+def _drive(path: str) -> str:
+    """The disk ``path`` is on (its drive letter or share), for adding up what each disk must hold."""
+    full = os.path.abspath(path)
+    return (os.path.splitdrive(full)[0] or full[:1]).upper()
+
+
+def _free(path: str) -> int | None:
+    """Free bytes on the disk that holds ``path`` (its nearest existing folder); None when unknown."""
+    p = os.path.abspath(path)
+    while p and not os.path.exists(p):
+        up = os.path.dirname(p)
+        if up == p:
+            return None
+        p = up
+    try:
+        return shutil.disk_usage(p).free
+    except OSError:
+        return None
 
 
 def _made_here(path: str) -> bool:
@@ -136,6 +168,76 @@ class Direct:
         changed is copied): when Settings asks for it and the client opens such folders (``retailpack.FOLDER_MARK``).
         Off, the packed MPQ as before - what everyone else's install does."""
         return bool(self.folder) and RP.reads_folder_archives(self.client) is True
+
+    @property
+    def compress(self) -> bool:
+        """Whether the patch's files are compressed: yes for the packed MPQ the client reads (about half the
+        size); not for a folder MPQ's, which Install only reads back to copy its files out as they are."""
+        return not self.as_folder
+
+    def estimate(self, tables: dict, files: Files) -> tuple[int, int]:
+        """The patch's size before it's packed: its files' own size, and about what that comes to as the
+        patch keeps them (``retailpack.SQUEEZED``, when ``compress``)."""
+        keep = (lambda kind: RP.SQUEEZED.get(kind, 0.6)) if self.compress else (lambda kind: 1.0)
+        raw = est = 0.0
+        for blob in [*tables.values(), *files.dbc.values(), *files.made.values()]:
+            raw += len(blob)
+            est += len(blob) * keep("table")
+        for f in files.ship:
+            n = self.source.size_of(f) or 0
+            raw += n
+            est += n * keep(files.kinds.get(f, ""))
+        return int(raw), int(est)
+
+    def room(self, est: int, install: bool) -> str:
+        """Why the disks can't take a patch of about ``est`` bytes ("" when they can, or can't be told): the
+        build (in the work folder), and for an install the backup of the patch it replaces (also in the
+        work folder) and the copy in the client's Data. Said before anything is written."""
+        need: dict[str, list] = {}
+        want = int(est * SLACK[0]) + SLACK[1]
+
+        def add(path: str, n: int, what: str) -> None:
+            got = need.setdefault(_drive(path), [path, 0, []])
+            got[1] += n
+            got[2].append(what)
+
+        add(self.work, want, "the build")
+        data = self.cfg.client_data
+        if install and data:
+            dest = os.path.join(data, self.patch_name)
+            if os.path.isfile(dest):
+                add(self.work, os.path.getsize(dest), f"the backup of the {self.patch_name} it replaces")
+            elif self.as_folder and os.path.isdir(dest):
+                add(self.work, want, "the backup of the files it replaces")
+            add(data, want, "the client's copy")
+        for drive, (path, n, what) in need.items():
+            free = _free(path)
+            if free is not None and free < n:
+                return (f"not enough disk space: the patch needs about {_size(n)} on {drive} ({', '.join(what)}) and "
+                        f"{drive} has {_size(free)} free. Free some space, or take some looks out of the basket")
+        return ""
+
+    def prune_backups(self, keep: int = KEEP_BACKUPS) -> list[str]:
+        """The installs' backups but the last ``keep`` taken out (Undo goes back through those). A backup
+        folder without a record - an install that stopped part-way, which may hold the only copy of what it
+        took out of the client - stays."""
+        root = os.path.join(self.work, "backups")
+        if not os.path.isdir(root):
+            return []
+        made = sorted(n for n in os.listdir(root) if STAMP.match(n) and any(
+            os.path.isfile(os.path.join(root, n, r)) for r in ("install.json", "install.json.undone")))
+        gone = []
+        for n in made[:-keep] if keep > 0 else made:
+            folder = os.path.join(root, n)
+            try:                                 # its record first: a folder only part deleted is never an Undo
+                for r in ("install.json", "install.json.undone"):
+                    if os.path.isfile(os.path.join(folder, r)):
+                        os.replace(os.path.join(folder, r), os.path.join(folder, r + ".pruned"))
+            except OSError:
+                continue
+            shutil.rmtree(folder, ignore_errors=True)
+            gone.append(n)
+        return gone
 
     def without_own(self, sources: list) -> list:
         """A ClientData's sources but this route's own patches, packed or folders (labelled
@@ -329,6 +431,12 @@ class Direct:
         passed("mounts")
         self._step("pack")
         patch = os.path.join(self.work, "out", self.patch_name)
+        raw, est = self.estimate(tables, files)
+        self.say(f"   the patch: about {_size(est)}" + (f" (its files {_size(raw)}, compressed)" if est < raw else ""))
+        short = self.room(est, install)
+        if short:
+            self.say(f"!! {short}")
+            return False
         self.pack(patch, tables, files, pieces, record)
         self.write_view_list(files)
         passed("pack")
@@ -645,7 +753,7 @@ class Direct:
         for f, p in files.paths.items():
             if files.kinds[f] != "sound":            # the client opens sounds by name (SoundEntries)
                 (texture_rows if files.kinds[f] == "texture" else model_rows).setdefault(f, p)
-        w = RP.PatchWriter(patch)
+        w = RP.PatchWriter(patch, compress=self.compress)
         try:
             w.add(RP.MANIFEST, json.dumps({"by": "Retroport Workbench (retail direct)", "time": record["time"],
                                            "build": record["build"], "looks": record["looks"],
@@ -678,7 +786,9 @@ class Direct:
         except BaseException:
             w.abandon()
             raise
-        self.say(f"   wrote {patch} ({os.path.getsize(patch) / 1048576:.1f} MB): {len(tables)} tables, the path "
+        size = os.path.getsize(patch)
+        self.say(f"   wrote {patch} ({_size(size)}" + (f", {_size(w.raw)} before compressing" if size < w.raw else "") +
+                 (", MPQ v2: past 4 GB" if w.v2 else "") + f"): {len(tables)} tables, the path "
                  f"tables ({len(model_rows):,} models, {len(texture_rows):,} textures), {len(files.ship) - missing} files")
         if missing:
             self.say(f"!  {missing} file(s) couldn't be read from your retail install")
@@ -809,6 +919,10 @@ class Direct:
             shutil.rmtree(cache, ignore_errors=True)
             self.say("   cleared the client's Cache folder")
         J.save_json(os.path.join(backup, "install.json"), record)
+        gone = self.prune_backups()
+        if gone:
+            self.say(f"   took out {len(gone)} older backup(s) - Install keeps the last {KEEP_BACKUPS} (Undo goes back "
+                     "through them)")
         self.say("Installed. Apply the SQL to your world database, restart the worldserver, then log in "
                  f"with {edition.CLIENT_NAME}:")
         for p in self.sql_files():

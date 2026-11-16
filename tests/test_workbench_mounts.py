@@ -305,6 +305,9 @@ class FakeSource:
     def try_read(self, fdid):
         return (self.files[fdid], "") if fdid in self.files else (None, "not stored")
 
+    def size_of(self, fdid):
+        return len(self.files[fdid]) if fdid in self.files else None
+
     def open(self):
         return None
 
